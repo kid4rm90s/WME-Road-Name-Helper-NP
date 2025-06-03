@@ -1,19 +1,31 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2025.05.13.04
+// @version         2025.06.03.01
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
 // @exclude         *://*.waze.com/user/editor*
-// @grant           none
-// @namespace       https://greasyfork.org/users/1253347
-// @downloadURL     none
-// @updateURL       none
+// @connect         greasyfork.org
+// @grant           GM_xmlhttpRequest
+// @namespace       https://greasyfork.org/users/1087400
+// @require         https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
+// @downloadURL     https://update.greasyfork.org/scripts/538171/WME%20Road%20Name%20Helper%20NP.user.js
+// @updateURL  https://update.greasyfork.org/scripts/538171/WME%20Road%20Name%20Helper%20NP.meta.js
+
 // ==/UserScript==
 /* Thanks to its Original author Brandon28AU (https://greasyfork.org/en/scripts/493429-wme-standard-suffix-abbreviations) for this script*/
+
+/* global WazeWrap */
+
 (function() {
     'use strict';
+    const updateMessage = 'New update!';
+    const SCRIPT_VERSION = GM_info.script.version.toString();
+    const SCRIPT_NAME = GM_info.script.name;
+    const DOWNLOAD_URL = GM_info.script.downloadURL;
+    let sdk;
+	
     // Suffix Abbreviation Data (Abbreviation: FullWord)
     const wmessa_approvedAbbr = {"Ally": "Alley", "App": "Approach", "Arc": "Arcade", "Av": "Avenue", "Bwlk": "Boardwalk", "Bvd": "Boulevard", "Brk": "Break", "Bypa": "Bypass", "Ch": "Chase", "Cct": "Circuit", "Cl": "Close", "Con": "Concourse", "Ct": "Court", "Cr": "Crescent", "Crst": "Crest", "Dr": "Drive", "Ent": "Entrance", "Esp": "Esplanade", "Exp": "Expressway", "Ftrl": "Firetrail", "Fwy": "Freeway", "Glde": "Glade", "Gra": "Grange", "Gr": "Grove", "Hwy": "Highway", "Mwy": "Motorway", "Pde": "Parade", "Pwy": "Parkway", "Psge": "Passage", "Pl": "Place", "Plza": "Plaza", "Prom": "Promenade", "Qys": "Quays", "Rtt": "Retreat", "Rdge": "Ridge", "Rd": "Road", "Sq": "Square", "Stps": "Steps", "St": "Street", "Sbwy": "Subway", "Tce": "Terrace", "Trk": "Track", "Trl": "Trail", "Vsta": "Vista"};
 
@@ -89,6 +101,8 @@
         } else {
             console.warn("WMESSA: Edit panel not found for observer.");
         }
+		
+        WazeWrap.Interface.ShowScriptUpdate("WME Road Name Helper NP", GM_info.script.version, updateMessage, "https://greasyfork.org/en/scripts/538171-wme-road-name-helper-np", "https://github.com/kid4rm90s/WME-Road-Name-Helper-NP");
     }
 
     function wmessa_monitor(element) {
@@ -320,14 +334,32 @@
         abbrOutput.innerText = messages.filter(m => m).join('\n') || 'Awaiting input or check standards.';
     }
 
-    function wmessa_bootstrap() {
-        if (typeof W === 'object' && W.userscripts?.state.isReady && document.getElementById('edit-panel')) {
+        function wmessa_bootstrap() {
+        const wmeSdk = getWmeSdk({ scriptId: 'wme-road-name-helper-np', scriptName: 'WME Road Name Helper NP' });
+        sdk = wmeSdk;
+        sdk.Events.once({ eventName: 'wme-ready' }).then(() => {
+            loadScriptUpdateMonitor();
             wmessa_init();
-        } else {
-            setTimeout(wmessa_bootstrap, 250);
-        }
+        });
     }
 
-    wmessa_bootstrap();
+    function waitForWME() {
+        if (!unsafeWindow.SDK_INITIALIZED) {
+            setTimeout(waitForWME, 500);
+            return;
+        }
+        unsafeWindow.SDK_INITIALIZED.then(wmessa_bootstrap);
+    }
+        waitForWME();
+           
+    function loadScriptUpdateMonitor() {
+        try {
+            const updateMonitor = new WazeWrap.Alerts.ScriptUpdateMonitor(SCRIPT_NAME, SCRIPT_VERSION, DOWNLOAD_URL, GM_xmlhttpRequest);
+            updateMonitor.start();
+        } catch (ex) {
+            // Report, but don't stop if ScriptUpdateMonitor fails.
+            console.error(`${SCRIPT_NAME}:`, ex);
+        }
+    }
 
 })();
