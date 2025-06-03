@@ -10,8 +10,8 @@
 // @grant           GM_xmlhttpRequest
 // @namespace       https://greasyfork.org/users/1087400
 // @require         https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
-// @downloadURL     https://update.greasyfork.org/scripts/538171/WME%20Road%20Name%20Helper%20NP.user.js
-// @updateURL       https://update.greasyfork.org/scripts/538171/WME%20Road%20Name%20Helper%20NP.meta.js
+// @downloadURL     
+// @updateURL       
 
 // ==/UserScript==
 /* Thanks to its Original author Brandon28AU (https://greasyfork.org/en/scripts/493429-wme-standard-suffix-abbreviations) for this script*/
