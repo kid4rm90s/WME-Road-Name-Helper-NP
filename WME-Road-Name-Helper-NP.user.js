@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2025.06.03.01
+// @version         2025.06.03.02
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
@@ -11,7 +11,7 @@
 // @namespace       https://greasyfork.org/users/1087400
 // @require         https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
 // @downloadURL     https://update.greasyfork.org/scripts/538171/WME%20Road%20Name%20Helper%20NP.user.js
-// @updateURL  https://update.greasyfork.org/scripts/538171/WME%20Road%20Name%20Helper%20NP.meta.js
+// @updateURL       https://update.greasyfork.org/scripts/538171/WME%20Road%20Name%20Helper%20NP.meta.js
 
 // ==/UserScript==
 /* Thanks to its Original author Brandon28AU (https://greasyfork.org/en/scripts/493429-wme-standard-suffix-abbreviations) for this script*/
@@ -20,7 +20,7 @@
 
 (function() {
     'use strict';
-    const updateMessage = 'New update!';
+    const updateMessage = 'Minor update to fix script update monitor';
     const SCRIPT_VERSION = GM_info.script.version.toString();
     const SCRIPT_NAME = GM_info.script.name;
     const DOWNLOAD_URL = GM_info.script.downloadURL;
@@ -102,7 +102,7 @@
             console.warn("WMESSA: Edit panel not found for observer.");
         }
 		
-        WazeWrap.Interface.ShowScriptUpdate("WME Road Name Helper NP", GM_info.script.version, updateMessage, "https://greasyfork.org/en/scripts/538171-wme-road-name-helper-np", "https://github.com/kid4rm90s/WME-Road-Name-Helper-NP");
+        WazeWrap.Interface.ShowScriptUpdate("WME Road Name Helper NP", GM_info.script.version, updateMessage, "https://update.greasyfork.org/scripts/538171/WME%20Road%20Name%20Helper%20NP.user.js", "https://github.com/kid4rm90s/WME-Road-Name-Helper-NP");
     }
 
     function wmessa_monitor(element) {
