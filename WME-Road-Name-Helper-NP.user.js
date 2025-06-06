@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2025.06.06.01
+// @version         2025.06.06.02
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
@@ -150,7 +150,7 @@
             console.warn("WMESSA: Edit panel not found for observer.");
         }
 		
-        WazeWrap.Interface.ShowScriptUpdate("WME Road Name Helper NP", GM_info.script.version, updateMessage, "https://update.greasyfork.org/scripts/538171/WME%20Road%20Name%20Helper%20NP.user.js", "https://github.com/kid4rm90s/WME-Road-Name-Helper-NP");
+        WazeWrap.Interface.ShowScriptUpdate("WME Road Name Helper NP", GM_info.script.version, updateMessage, "https://greasyfork.org/en/scripts/538171", "https://greasyfork.org/en/scripts/538171-wme-road-name-helper-np/feedback");
     }
 
     // Also observe for alt street card (for alt names)
