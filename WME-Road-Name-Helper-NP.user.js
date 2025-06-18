@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2025.06.18.01
+// @version         2025.06.18.02
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
@@ -135,6 +135,7 @@
     रा७: 'रारा०७',
     रा८: 'रारा०८',
     रा९: 'रारा०९',
+    AH02: 'AH2',
   };
 
   // Suffixes that should be preserved in title case (case-insensitive)
