@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2025.06.15.02
+// @version         2025.06.18.01
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
@@ -18,10 +18,7 @@
 (function () {
   'use strict';
   const updateMessage = `
-- Added: Typing "AH2" now suggests "AH02"<br>
-- Added: Typing "NH01 - रा१" or using suffix "रा१" now suggests "NH01 - रारा०१"<br>
-- Improved: Custom suffix and highway code mapping logic for Nepali and highway abbreviations<br>
-- Fixed: Suffix suggestion logic for Nepali abbreviations
+- Restored AH02 to AH2.
 `;
   const SCRIPT_VERSION = GM_info.script.version.toString();
   const SCRIPT_NAME = GM_info.script.name;
@@ -224,15 +221,15 @@
     'NH78',
     'NH79',
     'NH80',
-    'AH01',
-    'AH02',
-    'AH03',
-    'AH04',
-    'AH05',
-    'AH06',
-    'AH07',
-    'AH08',
-    'AH09',
+    'AH1',
+    'AH2',
+    'AH3',
+    'AH4',
+    'AH5',
+    'AH6',
+    'AH7',
+    'AH8',
+    'AH9',
     'AH10',
   ];
 
@@ -319,11 +316,6 @@
     'NH78-': 'NH78 - रारा७८',
     'NH79-': 'NH79 - रारा७९',
     'NH80-': 'NH80 - रारा८०',
-    AH1: 'AH01',
-    AH2: 'AH02',
-    AH3: 'AH03',
-    AH4: 'AH04',
-    AH5: 'AH05',
   };
 
   // Suffixes with No Standard Abbreviation
@@ -741,6 +733,9 @@
 
   /*
 Changelog:
+2025.06.18.01
+- Restored AH02 to AH2.
+
 2025.06.15.02
 - Added: Typing "AH2" now suggests "AH02"
 - Added: Typing "NH01 - रा१" or using suffix "रा१" now suggests "NH01 - रारा०१"
