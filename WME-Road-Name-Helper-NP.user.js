@@ -1392,7 +1392,7 @@ Version 2025.12.02.02:
       const segment = sdk.DataModel.Segments.getById({ segmentId: segmentId });
       if (!segment) {
         console.warn(`${SCRIPT_NAME}: Segment ${segmentId} not found`);
-        alert(`Segment ${segmentId} not found. It may have been deleted.`);
+        WazeWrap.Alerts.info(SCRIPT_NAME, `Segment ${segmentId} not found. It may have been deleted.`);
         return;
       }
       
@@ -1557,7 +1557,7 @@ Version 2025.12.02.02:
       
     } catch (error) {
       console.error(`${SCRIPT_NAME}: Error fixing segment ${segment.id}:`, error);
-      alert(`Failed to update segment ${segment.id}. Check console for details.`);
+      WazeWrap.Alerts.error(SCRIPT_NAME, `Failed to update segment ${segment.id}. Check console for details.`);
     }
   }
   
