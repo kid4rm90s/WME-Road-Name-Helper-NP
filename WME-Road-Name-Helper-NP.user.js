@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2025.12.02.02
-// @author          Kid4rm90s
+// @version         2025.12.02.03
+// @author          Kid4rm90s 
 // @license         MIT
 // @match           *://*.waze.com/*editor*
 // @exclude         *://*.waze.com/user/editor*
@@ -19,15 +19,12 @@
 (function () {
   'use strict';
   const updateMessage = `
-Version 2025.12.02.02:
-- FIXED: "Fix" button now correctly updates only changed street names
-- FIXED: City names are now preserved when updating street names
-- FIXED: Alt names are updated granularly (only changed names are modified)
-- NEW: Preview checkbox to highlight segments with issues on the map (yellow overlay)
-- NEW: Hover over segment IDs in the list to highlight individual segments
-- NEW: Click segment IDs to select and center the map on that segment
-- IMPROVED: Migrated to official WME SDK for all map interactions
-- IMPROVED: Better error handling and coordinate validation
+Version 2025.12.02.03:
+- <strong>FIXED</strong>: <br>Layer z-index conflict with WME Segment City Tool (changed from roads-2 to roads-3)
+<br> - Highlight layer drifting above roads layer (added watchdog to maintain z-index) <br>
+- <strong>CHANGED</strong>: <br> Highlight color from yellow to orange (#ff8800) for better visual distinction <br>
+- Stroke width increased from 30 to 35 for improved visibility <br>
+- <strong>IMPROVED</strong>: Layer persistence and stability with continuous z-index monitoring
 `;
   const SCRIPT_VERSION = GM_info.script.version.toString();
   const SCRIPT_NAME = GM_info.script.name;
@@ -35,9 +32,9 @@ Version 2025.12.02.02:
   const GreasyFork_URL = 'https://greasyfork.org/en/scripts/538171-wme-road-name-helper-np';
   const forumURL = 'https://greasyfork.org/en/scripts/538171-wme-road-name-helper-np/feedback';
   const SCRIPT_ID = 'wme-road-name-helper-np';
-  const SCAN_DEBOUNCE_DELAY = 300; // 300ms delay after map movement stops
+  const SCAN_DEBOUNCE_DELAY = 200; // 200ms delay after map movement stops
   const PROGRESS_UPDATE_THROTTLE = 10; // Update progress every N segments
-  const RESCAN_DELAY_AFTER_FIX = 500; // Delay before rescanning after fix
+  const RESCAN_DELAY_AFTER_FIX = 300; // Delay before rescanning after fix
   const MAX_SEGMENTS_TO_DISPLAY = 100; // Limit displayed segments for performance
   const LAYER_NAME = 'WME Road Name Helper NP'; // Layer name for highlighting
   
@@ -118,7 +115,7 @@ Version 2025.12.02.02:
     Boulevard: 'Bvd',
     Blvd: 'Bvd',
     Break: 'Brk',
-    Bypass: 'Bypa',
+    //Bypass: 'Bypa',
     Chase: 'Ch',
     Circuit: 'Cct',
     Close: 'Cl',
@@ -1620,17 +1617,27 @@ Version 2025.12.02.02:
         styleRules: [
           {
             style: {
-              strokeColor: '#ff0',
+              strokeColor: '#ff8800',
               strokeDashstyle: 'solid',
-              strokeWidth: 30
+              strokeWidth: 35
             }
           }
         ]
       });
       
-      const zIndex = sdk.Map.getLayerZIndex({ layerName: 'roads' }) - 2;
+      const zIndex = sdk.Map.getLayerZIndex({ layerName: 'roads' }) - 3;
       sdk.Map.setLayerZIndex({ layerName: LAYER_NAME, zIndex });
       sdk.Map.setLayerOpacity({ layerName: LAYER_NAME, opacity: 0.6 });
+      
+      // HACK to prevent layer z-index from drifting above roads layer
+      const checkLayerZIndex = () => {
+        const currentZIndex = sdk.Map.getLayerZIndex({ layerName: LAYER_NAME });
+        if (currentZIndex !== zIndex) {
+          sdk.Map.setLayerZIndex({ layerName: LAYER_NAME, zIndex });
+        }
+      };
+      setInterval(() => { checkLayerZIndex(); }, 100);
+      // END HACK
       
       console.log(`${SCRIPT_NAME}: Highlight layer initialized`);
     } catch (error) {

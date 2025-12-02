@@ -1,5 +1,21 @@
 # Changelog - WME Road Name Helper NP
 
+## Version 2025.12.02.03 (December 2, 2025)
+
+### 🐛 Bug Fixes
+- **Fixed layer z-index conflict**: Changed highlight layer z-index from `roads - 2` to `roads - 3` to prevent conflict with WME Segment City Tool which also uses `roads - 2`
+- **Fixed highlight layer drift**: Added watchdog interval that checks every 100ms to ensure the layer z-index stays at the correct position and doesn't drift above the roads layer
+
+### 🎨 Visual Changes
+- **Changed highlight color**: Updated from yellow (`#ff0`) to orange (`#ff8800`) for better visual distinction from other scripts
+- **Increased stroke width**: Changed from 30 to 35 pixels for improved visibility and differentiation
+
+### 🔧 Improvements
+- **Layer stability**: Implemented continuous z-index monitoring to prevent layer positioning issues over time
+- **Multi-script compatibility**: Better coexistence with other WME scripts that use map overlays
+
+---
+
 ## Version 2025.12.02.02 (December 2, 2025)
 
 ### 🐛 Bug Fixes
