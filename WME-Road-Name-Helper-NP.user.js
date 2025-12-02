@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2025.06.18.02
+// @version         2025.12.02.02
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
 // @exclude         *://*.waze.com/user/editor*
 // @connect         greasyfork.org
 // @grant           GM_xmlhttpRequest
+// @grant           GM_addStyle
 // @namespace       https://greasyfork.org/users/1087400
 // @require         https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
 // @downloadURL    https://update.greasyfork.org/scripts/538171/WME%20Road%20Name%20Helper%20NP.user.js
@@ -18,14 +19,44 @@
 (function () {
   'use strict';
   const updateMessage = `
-- Restored AH02 to AH2.
+Version 2025.12.02.02:
+- FIXED: "Fix" button now correctly updates only changed street names
+- FIXED: City names are now preserved when updating street names
+- FIXED: Alt names are updated granularly (only changed names are modified)
+- NEW: Preview checkbox to highlight segments with issues on the map (yellow overlay)
+- NEW: Hover over segment IDs in the list to highlight individual segments
+- NEW: Click segment IDs to select and center the map on that segment
+- IMPROVED: Migrated to official WME SDK for all map interactions
+- IMPROVED: Better error handling and coordinate validation
 `;
   const SCRIPT_VERSION = GM_info.script.version.toString();
   const SCRIPT_NAME = GM_info.script.name;
   const DOWNLOAD_URL = GM_info.script.downloadURL;
   const GreasyFork_URL = 'https://greasyfork.org/en/scripts/538171-wme-road-name-helper-np';
   const forumURL = 'https://greasyfork.org/en/scripts/538171-wme-road-name-helper-np/feedback';
+  const SCRIPT_ID = 'wme-road-name-helper-np';
+  const SCAN_DEBOUNCE_DELAY = 300; // 300ms delay after map movement stops
+  const PROGRESS_UPDATE_THROTTLE = 10; // Update progress every N segments
+  const RESCAN_DELAY_AFTER_FIX = 500; // Delay before rescanning after fix
+  const MAX_SEGMENTS_TO_DISPLAY = 100; // Limit displayed segments for performance
+  const LAYER_NAME = 'WME Road Name Helper NP'; // Layer name for highlighting
+  
   let sdk;
+  let currentMapExtent = null;
+  let scanTimeout;
+  let scannedSegments = [];
+  let isScanning = false;
+  let eventSubscriptions = [];
+  let previewEnabled = false;
+  
+  // Cached UI elements
+  const cachedElements = {
+    scanCounter: null,
+    fixAllButton: null,
+    resultsContainer: null,
+    progressBar: null,
+    spinner: null
+  };
 
   // Suffix Abbreviation Data (Abbreviation: FullWord)
   // This is for suffixes that have standard abbreviations
@@ -135,6 +166,77 @@
     रा७: 'रारा०७',
     रा८: 'रारा०८',
     रा९: 'रारा०९',
+    रा१०: 'रारा१०',
+    रा११: 'रारा११',
+    रा१२: 'रारा१२',
+    रा१३: 'रारा१३',
+    रा१४: 'रारा१४',
+    रा१५: 'रारा१५',
+    रा१६: 'रारा१६',
+    रा१७: 'रारा१७',
+    रा१८: 'रारा१८',
+    रा१९: 'रारा१९',
+    रा२०: 'रारा२०',
+    रा२१: 'रारा२१',
+    रा२२: 'रारा२२',
+    रा२३: 'रारा२३',
+    रा२४: 'रारा२४',
+    रा२५: 'रारा२५',
+    रा२६: 'रारा२६',
+    रा२७: 'रारा२७',
+    रा२८: 'रारा२८',
+    रा२९: 'रारा२९',
+    रा३०: 'रारा३०',
+    रा३१: 'रारा३१',
+    रा३२: 'रारा३२',
+    रा३३: 'रारा३३',
+    रा३४: 'रारा३४',
+    रा३५: 'रारा३५',
+    रा३६: 'रारा३६',
+    रा३७: 'रारा३७',
+    रा३८: 'रारा३८',
+    रा३९: 'रारा३९',
+    रा४०: 'रारा४०',
+    रा४१: 'रारा४१',
+    रा४२: 'रारा४२',
+    रा४३: 'रारा४३',
+    रा४४: 'रारा४४',
+    रा४५: 'रारा४५',
+    रा४६: 'रारा४६',
+    रा४७: 'रारा४७',
+    रा४८: 'रारा४८',
+    रा४९: 'रारा४९',
+    रा५०: 'रारा५०',
+    रा५१: 'रारा५१',
+    रा५२: 'रारा५२',
+    रा५३: 'रारा५३',
+    रा५४: 'रारा५४',
+    रा५५: 'रारा५५',
+    रा५६: 'रारा५६',
+    रा५७: 'रारा५७',
+    रा५८: 'रारा५८',
+    रा५९: 'रारा५९',
+    रा६०: 'रारा६०',
+    रा६१: 'रारा६१',
+    रा६२: 'रारा६२',
+    रा६३: 'रारा६३',
+    रा६४: 'रारा६४',
+    रा६५: 'रारा६५',
+    रा६६: 'रारा६६',
+    रा६७: 'रारा६७',
+    रा६८: 'रारा६८',
+    रा६९: 'रारा६९',
+    रा७०: 'रारा७०',
+    रा७१: 'रारा७१',
+    रा७२: 'रारा७२',
+    रा७३: 'रारा७३',
+    रा७४: 'रारा७४',
+    रा७५: 'रारा७५',
+    रा७६: 'रारा७६',
+    रा७७: 'रारा७७',
+    रा७८: 'रारा७८',
+    रा७९: 'रारा७९',
+    रा८०: 'रारा८०',
     AH02: 'AH2',
   };
 
@@ -232,6 +334,7 @@
     'AH8',
     'AH9',
     'AH10',
+    'AH42',
   ];
 
   // Highway Suffix Suggestion Data (EXACT match only)
@@ -328,7 +431,7 @@
     Mount: 'Mt',
     Saint: 'St', // Note: "St" for Saint. Suffix logic handles "St" for Street.
     Fort: 'Ft',
-    Marg: 'Marga', // Example: "Marg Bryant Drive" -> "Marga Bryant Dr"
+    Marg: 'Marga', // Nepal: "Marg" should be expanded to full word "Marga"
     // Add other common words like "North": "N", "South": "S", etc., if standard for pre-suffix words.
   };
 
@@ -337,7 +440,7 @@
     Mt: 'Mount',
     St: 'Saint',
     Ft: 'Fort',
-    Marga: 'Marg', // Example
+    Marga: 'Marg', // Nepal: "Marga" is the approved full word form
     // e.g. "N": "North", "S": "South"
   };
 
@@ -355,7 +458,48 @@
 
   let wmessa_valueObserver;
 
+  // Add styles for sidebar panel
+  function addSidebarStyles() {
+    const styles = [
+      '.rnh-container { margin: 10px 5px; }',
+      '.rnh-title { font-weight: bold; margin-bottom: 10px; }',
+      '.rnh-scan-counter { color: #666; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }',
+      '.rnh-spinner { animation: rnh-spin 0.5s infinite linear; }',
+      '@keyframes rnh-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }',
+      '.rnh-progress-bar { width: 1%; height: 8px; background-color: #4CAF50; margin-bottom: 10px; border: 1px solid #333; transition: width 0.3s ease; display: none; }',
+      '.rnh-results { max-height: 400px; overflow-y: auto; }',
+      '.rnh-segment-item { padding: 8px; margin-bottom: 5px; border: 1px solid #ddd; border-radius: 4px; background: #f9f9f9; cursor: pointer; }',
+      '.rnh-segment-item:hover { background: #f0f0f0; border-color: #999; }',
+      '.rnh-segment-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }',
+      '.rnh-segment-id { font-size: 11px; color: #666; cursor: pointer; }',
+      '.rnh-segment-id:hover { color: #0066cc; text-decoration: underline; }',
+      '.rnh-road-type { font-size: 11px; color: #666; background: #e0e0e0; padding: 2px 6px; border-radius: 3px; }',
+      '.rnh-name-row { margin-bottom: 3px; font-size: 12px; }',
+      '.rnh-name-label { font-weight: bold; color: #555; min-width: 40px; display: inline-block; }',
+      '.rnh-current-name { color: #d32f2f; }',
+      '.rnh-suggested-name { color: #388e3c; }',
+      '.rnh-fix-button { padding: 4px 8px; font-size: 11px; background: #4CAF50; color: white; border: none; border-radius: 3px; cursor: pointer; }',
+      '.rnh-fix-button:hover { background: #45a049; }',
+      '.rnh-fix-button:disabled { background: #ccc; cursor: not-allowed; }',
+      '.rnh-fix-all-button { width: 100%; padding: 8px; margin-bottom: 10px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }',
+      '.rnh-fix-all-button:hover { background: #1976D2; }',
+      '.rnh-fix-all-button:disabled { background: #ccc; cursor: not-allowed; }',
+      '.rnh-no-issues { text-align: center; color: #4CAF50; padding: 20px; font-weight: bold; }',
+      '.rnh-alt-names { margin-top: 5px; padding-left: 10px; border-left: 2px solid #ddd; }',
+      '.rnh-complete-icon { color: #4CAF50; }',
+      '.rnh-button-container { margin-bottom: 10px; }',
+      '.rnh-preview-container { margin-bottom: 10px; display: flex; align-items: center; gap: 5px; }',
+      '.rnh-preview-checkbox { margin: 0; }',
+      '.rnh-preview-label { margin: 0; font-size: 13px; cursor: pointer; }'
+    ].join('\n');
+    
+    GM_addStyle(styles);
+  }
+
   function wmessa_init() {
+    // Initialize sidebar panel
+    initSidebarPanel();
+    
     const observer = new MutationObserver((mutationsList) => {
       mutationsList.forEach((mutation) => {
         if (mutation.type === 'childList') {
@@ -704,11 +848,879 @@
     abbrOutput.innerText = messages.filter((m) => m).join('\n') || 'Awaiting input or check standards.';
   }
 
+  // ========== SIDEBAR PANEL FUNCTIONS ==========
+  
+  async function initSidebarPanel() {
+    try {
+      addSidebarStyles();
+      
+      const { tabLabel, tabPane } = await sdk.Sidebar.registerScriptTab();
+      
+      // Set tab label
+      tabLabel.textContent = 'RNH';
+      tabLabel.title = 'Road Name Helper';
+      
+      // Create main container
+      const container = document.createElement('div');
+      container.className = 'rnh-container';
+      
+      // Title
+      const title = document.createElement('wz-overline');
+      title.textContent = 'Road Name Helper';
+      title.style.marginBottom = '10px';
+      container.appendChild(title);
+      
+      // Version
+      const version = document.createElement('wz-label');
+      version.textContent = `Version ${SCRIPT_VERSION}`;
+      version.style.marginBottom = '10px';
+      container.appendChild(version);
+      
+      // Preview checkbox
+      const previewContainer = document.createElement('div');
+      previewContainer.className = 'rnh-preview-container';
+      const previewCheckbox = document.createElement('input');
+      previewCheckbox.type = 'checkbox';
+      previewCheckbox.id = 'rnh-preview-checkbox';
+      previewCheckbox.className = 'rnh-preview-checkbox';
+      previewCheckbox.checked = previewEnabled;
+      previewCheckbox.onchange = onPreviewChanged;
+      const previewLabel = document.createElement('label');
+      previewLabel.htmlFor = 'rnh-preview-checkbox';
+      previewLabel.className = 'rnh-preview-label';
+      previewLabel.textContent = 'Preview (highlight segments with issues)';
+      previewContainer.appendChild(previewCheckbox);
+      previewContainer.appendChild(previewLabel);
+      container.appendChild(previewContainer);
+      
+      // Scan counter
+      const scanCounter = document.createElement('div');
+      scanCounter.className = 'rnh-scan-counter';
+      scanCounter.innerHTML = '<i class="fa fa-check-circle rnh-complete-icon"></i><span>Scanned: 0 segments</span>';
+      container.appendChild(scanCounter);
+      cachedElements.scanCounter = scanCounter;
+      
+      // Progress bar
+      const progressBar = document.createElement('div');
+      progressBar.className = 'rnh-progress-bar';
+      container.appendChild(progressBar);
+      cachedElements.progressBar = progressBar;
+      
+      // Fix All button
+      const buttonContainer = document.createElement('div');
+      buttonContainer.className = 'rnh-button-container';
+      const fixAllButton = document.createElement('button');
+      fixAllButton.className = 'rnh-fix-all-button';
+      fixAllButton.textContent = 'Fix All Names';
+      fixAllButton.disabled = true;
+      fixAllButton.onclick = fixAllNames;
+      buttonContainer.appendChild(fixAllButton);
+      container.appendChild(buttonContainer);
+      cachedElements.fixAllButton = fixAllButton;
+      
+      // Results container
+      const resultsContainer = document.createElement('div');
+      resultsContainer.className = 'rnh-results';
+      container.appendChild(resultsContainer);
+      cachedElements.resultsContainer = resultsContainer;
+      
+      tabPane.appendChild(container);
+      
+      // Register event handlers and store subscriptions for cleanup
+      eventSubscriptions.push(
+        sdk.Events.on({
+          eventName: 'wme-map-move-end',
+          eventHandler: debouncedScan
+        })
+      );
+      
+      eventSubscriptions.push(
+        sdk.Events.on({
+          eventName: 'wme-map-zoom-changed',
+          eventHandler: debouncedScan
+        })
+      );
+      
+      eventSubscriptions.push(
+        sdk.Events.on({
+          eventName: 'wme-after-edit',
+          eventHandler: debouncedScan
+        })
+      );
+      
+      // Initial scan
+      debouncedScan();
+      
+      // Add cleanup on page unload
+      window.addEventListener('beforeunload', cleanup);
+      
+    } catch (error) {
+      console.error(`${SCRIPT_NAME}: Error initializing sidebar panel:`, error);
+    }
+  }
+  
+  /**
+   * Cleanup function to unsubscribe from events and clear timers
+   */
+  function cleanup() {
+    console.log(`${SCRIPT_NAME}: Cleaning up...`);
+    
+    // Clear any pending scan timeout
+    if (scanTimeout) {
+      clearTimeout(scanTimeout);
+    }
+    
+    // Unsubscribe from all events
+    eventSubscriptions.forEach(subscription => {
+      try {
+        if (subscription && typeof subscription.unsubscribe === 'function') {
+          subscription.unsubscribe();
+        }
+      } catch (err) {
+        console.warn(`${SCRIPT_NAME}: Error unsubscribing from event:`, err);
+      }
+    });
+    eventSubscriptions = [];
+  }
+  
+  /**
+   * Debounced scan function to prevent excessive scanning during map movements
+   */
+  function debouncedScan() {
+    clearTimeout(scanTimeout);
+    scanTimeout = setTimeout(() => {
+      if (!isScanning) {
+        scanRoadNames();
+      }
+    }, SCAN_DEBOUNCE_DELAY);
+  }
+  
+  function onScreen(geometry) {
+    if (!geometry || !currentMapExtent) return false;
+    
+    const [left, bottom, right, top] = currentMapExtent;
+    
+    if (geometry.type === 'Point') {
+      const [lon, lat] = geometry.coordinates;
+      return lon >= left && lon <= right && lat >= bottom && lat <= top;
+    } else if (geometry.type === 'LineString') {
+      return geometry.coordinates.some(([lon, lat]) => 
+        lon >= left && lon <= right && lat >= bottom && lat <= top
+      );
+    }
+    return true;
+  }
+  
+  /**
+   * Scan all on-screen road segments for naming issues
+   */
+  async function scanRoadNames() {
+    if (isScanning) {
+      console.log(`${SCRIPT_NAME}: Scan already in progress, skipping...`);
+      return;
+    }
+    
+    isScanning = true;
+    try {
+      // Get current map extent
+      currentMapExtent = sdk.Map.getMapExtent();
+      
+      if (!currentMapExtent) {
+        throw new Error('Unable to get map extent');
+      }
+      
+      // Show progress
+      updateProgress(true, 1);
+      
+      scannedSegments = [];
+      const segments = sdk.DataModel.Segments.getAll();
+      const onScreenSegments = segments.filter(segment => onScreen(segment.geometry));
+      
+      console.log(`${SCRIPT_NAME}: Scanning ${onScreenSegments.length} on-screen segments...`);
+      
+      let processedCount = 0;
+      let editableCount = 0;
+      const totalCount = onScreenSegments.length;
+      
+      for (const segment of onScreenSegments) {
+        processedCount++;
+        
+        // Check if segment is editable
+        if (!sdk.DataModel.Segments.hasPermissions({
+          permission: 'EDIT_PROPERTIES',
+          segmentId: segment.id
+        })) {
+          continue;
+        }
+        
+        editableCount++;
+        const issues = [];
+        
+        // Get street names from Streets data model using street IDs
+        let primaryStreetName = '';
+        const altStreetNames = [];
+        
+        if (segment.primaryStreetId) {
+          try {
+            const primaryStreet = sdk.DataModel.Streets.getById({ streetId: segment.primaryStreetId });
+            if (primaryStreet?.name) {
+              primaryStreetName = primaryStreet.name;
+              
+              const analysis = analyzeStreetName(primaryStreet.name);
+              if (analysis.needsFix) {
+                issues.push({
+                  type: 'primary',
+                  current: primaryStreet.name,
+                  suggested: analysis.suggested,
+                  reason: analysis.reason
+                });
+              }
+            }
+          } catch (err) {
+            console.warn(`${SCRIPT_NAME}: Error getting primary street ${segment.primaryStreetId}:`, err);
+          }
+        }
+        
+        // Check alternate street names
+        if (segment.alternateStreetIds && segment.alternateStreetIds.length > 0) {
+          segment.alternateStreetIds.forEach((streetId, index) => {
+            try {
+              const altStreet = sdk.DataModel.Streets.getById({ streetId });
+              if (altStreet?.name) {
+                altStreetNames.push(altStreet.name);
+                
+                const analysis = analyzeStreetName(altStreet.name);
+                if (analysis.needsFix) {
+                  issues.push({
+                    type: 'alt',
+                    index: index,
+                    current: altStreet.name,
+                    suggested: analysis.suggested,
+                    reason: analysis.reason
+                  });
+                }
+              }
+            } catch (err) {
+              console.warn(`${SCRIPT_NAME}: Error getting alt street ${streetId}:`, err);
+            }
+          });
+        }
+        
+        if (issues.length > 0) {
+          scannedSegments.push({
+            id: segment.id,
+            roadType: segment.roadType,
+            primaryStreetId: segment.primaryStreetId,
+            alternateStreetIds: segment.alternateStreetIds || [],
+            primaryStreetName: primaryStreetName,
+            altStreetNames: altStreetNames,
+            issues: issues
+          });
+        }
+        
+        // Update progress periodically
+        if (processedCount % PROGRESS_UPDATE_THROTTLE === 0 || processedCount === totalCount) {
+          updateProgress(true, (processedCount / totalCount) * 100);
+          updateScanCounter(processedCount);
+        }
+      }
+      
+      console.log(`${SCRIPT_NAME}: Scan complete. Total: ${totalCount}, Editable: ${editableCount}, Issues found: ${scannedSegments.length}`);
+      
+      // Update UI
+      updateProgress(false);
+      updateScanCounter(totalCount);
+      displayResults();
+      
+      // Highlight segments if preview is enabled
+      if (previewEnabled) {
+        highlightSegments();
+      }
+      
+    } catch (error) {
+      console.error(`${SCRIPT_NAME}: Error scanning road names:`, error);
+      updateProgress(false);
+      
+      // Show error message to user
+      if (cachedElements.resultsContainer) {
+        cachedElements.resultsContainer.innerHTML = `<div style="text-align: center; color: #d32f2f; padding: 20px;">⚠️ Error scanning segments. Please try again.</div>`;
+      }
+    } finally {
+      isScanning = false;
+    }
+  }
+  
+  /**
+   * Analyze a street name and determine if it needs fixing
+   * @param {string} streetName - The street name to analyze
+   * @returns {Object} Analysis result with needsFix, suggested, and reason properties
+   */
+  function analyzeStreetName(streetName) {
+    if (!streetName) return { needsFix: false };
+    
+    const currentWords = streetName.split(/\s+/);
+    let proposedWords = [...currentWords];
+    let changed = false;
+    let reasons = [];
+    
+    // Check for highway patterns first (e.g., "NH41 - रा४१" should become "NH41 - रारा४१")
+    const hwyPattern = /^(NH\d{2})\s*-\s*(.+)$/i;
+    const hwyMatch = streetName.match(hwyPattern);
+    if (hwyMatch) {
+      const hwyCode = hwyMatch[1];
+      const hwyPart = hwyMatch[2].trim();
+      
+      // Preserve highway names ending with "Hwy" (e.g., "NH41 - Prithvi Hwy")
+      if (hwyPart.match(/\s+Hwy$/i)) {
+        return { needsFix: false };
+      }
+      
+      // Check if the highway part needs fixing
+      const hwyKey = `${hwyCode.toUpperCase()}-`;
+      const suggestedHwy = wmessa_suggestedHwyAbbr[hwyKey];
+      
+      if (suggestedHwy && streetName !== suggestedHwy) {
+        return {
+          needsFix: true,
+          suggested: suggestedHwy,
+          reason: `Highway format: ${streetName} → ${suggestedHwy}`
+        };
+      }
+      
+      // Also check if just the Devanagari part needs fixing
+      const devanagariSuggestion = wmessa_suggestedAbbr[hwyPart];
+      if (devanagariSuggestion) {
+        const newSuggestion = `${hwyCode.toUpperCase()} - ${devanagariSuggestion}`;
+        if (streetName !== newSuggestion) {
+          return {
+            needsFix: true,
+            suggested: newSuggestion,
+            reason: `Highway Devanagari: ${hwyPart} → ${devanagariSuggestion}`
+          };
+        }
+      }
+    }
+    
+    // Check for standalone Devanagari abbreviations in any position
+    for (let i = 0; i < currentWords.length; i++) {
+      const word = currentWords[i];
+      const devanagariSuggestion = wmessa_suggestedAbbr[word];
+      if (devanagariSuggestion && devanagariSuggestion !== word) {
+        proposedWords[i] = devanagariSuggestion;
+        changed = true;
+        reasons.push(`${word} → ${devanagariSuggestion}`);
+      }
+    }
+    
+    // Process pre-suffix words
+    if (currentWords.length > 1) {
+      for (let i = 0; i < currentWords.length - 1; i++) {
+        const word = currentWords[i];
+        const wordLower = word.toLowerCase();
+        
+        // Skip if already processed as Devanagari
+        if (proposedWords[i] !== currentWords[i]) continue;
+        
+        const generalSuggestionKeyCi = Object.keys(wmessa_generalWordSuggestions).find((k) => k.toLowerCase() === wordLower);
+        if (generalSuggestionKeyCi) {
+          const suggestedGeneralAbbr = wmessa_generalWordSuggestions[generalSuggestionKeyCi];
+          if (suggestedGeneralAbbr.toLowerCase() !== wordLower) {
+            proposedWords[i] = suggestedGeneralAbbr;
+            changed = true;
+            reasons.push(`${word} → ${suggestedGeneralAbbr}`);
+          }
+        }
+      }
+    }
+    
+    // Process suffix (last word) - only if not already processed
+    if (currentWords.length > 0 && proposedWords[proposedWords.length - 1] === currentWords[currentWords.length - 1]) {
+      const potentialSuffix = currentWords[currentWords.length - 1];
+      const suffixAnalysis = wmessa_analyzeSuffix(potentialSuffix);
+      
+      if (suffixAnalysis.status === 'check' && suffixAnalysis.proposed.toLowerCase() !== potentialSuffix.toLowerCase()) {
+        proposedWords[currentWords.length - 1] = suffixAnalysis.proposed;
+        changed = true;
+        reasons.push(suffixAnalysis.message || `${potentialSuffix} → ${suffixAnalysis.proposed}`);
+      }
+    }
+    
+    const finalProposed = wmessa_titleCase(proposedWords.join(' '));
+    const capitalizationChanged = streetName !== finalProposed;
+    
+    if (changed || capitalizationChanged) {
+      return {
+        needsFix: true,
+        suggested: finalProposed,
+        reason: reasons.length > 0 ? reasons.join(', ') : 'Capitalization'
+      };
+    }
+    
+    return { needsFix: false };
+  }
+  
+  function updateProgress(show, percent = 1) {
+    const progressBar = cachedElements.progressBar;
+    const scanCounter = cachedElements.scanCounter;
+    
+    if (!progressBar || !scanCounter) return;
+    
+    const spinner = scanCounter.querySelector('i');
+    
+    if (show) {
+      progressBar.style.display = 'block';
+      progressBar.style.width = Math.max(percent, 1) + '%';
+      if (spinner) {
+        spinner.className = 'fa fa-spinner rnh-spinner';
+      }
+    } else {
+      progressBar.style.display = 'none';
+      if (spinner) {
+        spinner.className = 'fa fa-check-circle rnh-complete-icon';
+      }
+    }
+  }
+  
+  function updateScanCounter(count) {
+    const scanCounter = cachedElements.scanCounter;
+    if (!scanCounter) return;
+    
+    const span = scanCounter.querySelector('span');
+    if (span) {
+      span.textContent = `Scanned: ${count} segments`;
+    }
+  }
+  
+  /**
+   * Display scan results in the sidebar
+   */
+  function displayResults() {
+    const resultsContainer = cachedElements.resultsContainer;
+    const fixAllButton = cachedElements.fixAllButton;
+    
+    if (!resultsContainer) return;
+    
+    resultsContainer.innerHTML = '';
+    
+    if (scannedSegments.length === 0) {
+      resultsContainer.innerHTML = '<div class="rnh-no-issues">✓ No issues found!</div>';
+      if (fixAllButton) fixAllButton.disabled = true;
+      return;
+    }
+    
+    if (fixAllButton) fixAllButton.disabled = false;
+    
+    // Limit displayed segments for performance
+    const displaySegments = scannedSegments.slice(0, MAX_SEGMENTS_TO_DISPLAY);
+    const hiddenCount = scannedSegments.length - displaySegments.length;
+    
+    if (hiddenCount > 0) {
+      const warningDiv = document.createElement('div');
+      warningDiv.style.cssText = 'text-align: center; color: #ff9800; padding: 10px; background: #fff3e0; margin-bottom: 10px; border-radius: 4px; font-size: 12px;';
+      warningDiv.textContent = `⚠️ Showing ${displaySegments.length} of ${scannedSegments.length} segments (limited for performance). Fix these first, then rescan.`;
+      resultsContainer.appendChild(warningDiv);
+    }
+    
+    displaySegments.forEach(segment => {
+      const item = document.createElement('div');
+      item.className = 'rnh-segment-item';
+      
+      // Add hover event listeners for highlighting
+      item.onmouseenter = () => highlightSegmentOnHover(segment.id);
+      item.onmouseleave = () => clearHoverHighlight();
+      
+      // Header with segment ID and road type
+      const header = document.createElement('div');
+      header.className = 'rnh-segment-header';
+      
+      const segmentId = document.createElement('span');
+      segmentId.className = 'rnh-segment-id';
+      segmentId.textContent = `Segment #${segment.id}`;
+      segmentId.title = 'Click to select segment';
+      segmentId.onclick = () => selectSegment(segment.id);
+      
+      const roadType = document.createElement('span');
+      roadType.className = 'rnh-road-type';
+      const roadTypeObj = sdk.DataModel.Segments.getRoadTypes().find(rt => rt.id === segment.roadType);
+      roadType.textContent = roadTypeObj ? roadTypeObj.localizedName : 'Unknown';
+      
+      header.appendChild(segmentId);
+      header.appendChild(roadType);
+      item.appendChild(header);
+      
+      // Display issues
+      segment.issues.forEach(issue => {
+        const nameRow = document.createElement('div');
+        nameRow.className = 'rnh-name-row';
+        
+        const label = document.createElement('span');
+        label.className = 'rnh-name-label';
+        label.textContent = issue.type === 'primary' ? 'Name:' : `Alt ${issue.index + 1}:`;
+        
+        const current = document.createElement('span');
+        current.className = 'rnh-current-name';
+        current.textContent = issue.current;
+        
+        const arrow = document.createElement('span');
+        arrow.textContent = ' → ';
+        
+        const suggested = document.createElement('span');
+        suggested.className = 'rnh-suggested-name';
+        suggested.textContent = issue.suggested;
+        
+        nameRow.appendChild(label);
+        nameRow.appendChild(current);
+        nameRow.appendChild(arrow);
+        nameRow.appendChild(suggested);
+        
+        item.appendChild(nameRow);
+      });
+      
+      // Fix button
+      const fixButton = document.createElement('button');
+      fixButton.className = 'rnh-fix-button';
+      fixButton.textContent = 'Fix';
+      fixButton.onclick = () => fixSegmentNames(segment);
+      item.appendChild(fixButton);
+      
+      resultsContainer.appendChild(item);
+    });
+  }
+  
+  async function selectSegment(segmentId) {
+    try {
+      const segment = sdk.DataModel.Segments.getById({ segmentId: segmentId });
+      if (!segment) {
+        console.warn(`${SCRIPT_NAME}: Segment ${segmentId} not found`);
+        alert(`Segment ${segmentId} not found. It may have been deleted.`);
+        return;
+      }
+      
+      // First, select the segment in WME
+      sdk.Editing.setSelection({ selection: { ids: [segmentId], objectType: 'segment' } });
+      
+      // Then try to center the map on it
+      if (!segment.geometry || !segment.geometry.coordinates) {
+        console.warn(`${SCRIPT_NAME}: Segment ${segmentId} has no geometry, but selected in editor`);
+        return;
+      }
+      
+      // Calculate center of segment geometry
+      if (segment.geometry.type === 'LineString' && segment.geometry.coordinates.length > 0) {
+        const coords = segment.geometry.coordinates;
+        
+        // Validate the coordinates array
+        if (!coords || coords.length === 0) {
+          console.warn(`${SCRIPT_NAME}: Segment ${segmentId} has empty coordinates array`);
+          return;
+        }
+        
+        const midIndex = Math.floor(coords.length / 2);
+        const centerPoint = coords[midIndex];
+        
+        // Validate coordinates
+        if (!centerPoint || !Array.isArray(centerPoint) || centerPoint.length < 2) {
+          console.error(`${SCRIPT_NAME}: Invalid coordinate format for segment ${segmentId}:`, centerPoint);
+          return;
+        }
+        
+        // Ensure coordinates are numbers (geometry coordinates might be strings)
+        const lon = Number(centerPoint[0]);
+        const lat = Number(centerPoint[1]);
+        
+        // Validate lon/lat are valid numbers
+        if (isNaN(lon) || isNaN(lat)) {
+          console.error(`${SCRIPT_NAME}: Invalid lon/lat values for segment ${segmentId}: lon=${centerPoint[0]}, lat=${centerPoint[1]}`);
+          return;
+        }
+        
+        console.log(`${SCRIPT_NAME}: Centering map on segment ${segmentId} at [${lon}, ${lat}]`);
+        sdk.Map.setMapCenter({ lonLat: { lon, lat } });
+        
+        // Zoom to a good level to see the segment
+        const currentZoom = sdk.Map.getZoomLevel();
+        if (currentZoom < 4) {
+          sdk.Map.setZoomLevel({ zoomLevel: 4 });
+        }
+      }
+    } catch (error) {
+      console.error(`${SCRIPT_NAME}: Error selecting segment ${segmentId}:`, error);
+      // Don't show alert here since the segment is likely still selected in the editor
+    }
+  }
+  
+  /**
+   * Fix naming issues for a single segment
+   * @param {Object} segment - Segment object with issues to fix
+   */
+  async function fixSegmentNames(segment) {
+    try {
+      // Get the current city from the segment's existing streets (preserve city)
+      const getCityForStreet = (streetId) => {
+        if (!streetId) return null;
+        const street = sdk.DataModel.Streets.getById({ streetId });
+        return street && street.cityId ? street.cityId : null;
+      };
+      
+      let newPrimaryStreetId = null;
+      const altStreetUpdates = {}; // Only store streets that need updating
+      let hasChanges = false;
+      
+      // Process each issue
+      segment.issues.forEach(issue => {
+        if (issue.type === 'primary') {
+          // Get the city from current primary street to preserve it
+          const cityId = getCityForStreet(segment.primaryStreetId);
+          if (!cityId) {
+            console.warn(`${SCRIPT_NAME}: Cannot determine city for primary street, skipping`);
+            return;
+          }
+          
+          // Get or create street with suggested name in the same city
+          let street = sdk.DataModel.Streets.getStreet({ 
+            cityId: cityId, 
+            streetName: issue.suggested 
+          });
+          
+          if (!street) {
+            street = sdk.DataModel.Streets.addStreet({ 
+              streetName: issue.suggested, 
+              cityId: cityId 
+            });
+          }
+          
+          newPrimaryStreetId = street.id;
+          hasChanges = true;
+          console.log(`${SCRIPT_NAME}: Primary street "${issue.current}" → "${issue.suggested}" (ID: ${street.id})`);
+          
+        } else if (issue.type === 'alt') {
+          // Get the city from current alt street to preserve it
+          const currentAltStreetId = segment.alternateStreetIds[issue.index];
+          const cityId = getCityForStreet(currentAltStreetId);
+          if (!cityId) {
+            console.warn(`${SCRIPT_NAME}: Cannot determine city for alt street ${issue.index}, skipping`);
+            return;
+          }
+          
+          // Get or create alt street with suggested name in the same city
+          let altStreet = sdk.DataModel.Streets.getStreet({ 
+            cityId: cityId, 
+            streetName: issue.suggested 
+          });
+          
+          if (!altStreet) {
+            altStreet = sdk.DataModel.Streets.addStreet({ 
+              streetName: issue.suggested, 
+              cityId: cityId 
+            });
+          }
+          
+          altStreetUpdates[issue.index] = altStreet.id;
+          hasChanges = true;
+          console.log(`${SCRIPT_NAME}: Alt street ${issue.index} "${issue.current}" → "${issue.suggested}" (ID: ${altStreet.id})`);
+        }
+      });
+      
+      // Only update if there are changes
+      if (hasChanges) {
+        // Build update parameters - only include what actually changed
+        const updateParams = {
+          segmentId: segment.id
+        };
+        
+        // Only include primaryStreetId if it changed
+        if (newPrimaryStreetId) {
+          updateParams.primaryStreetId = newPrimaryStreetId;
+        }
+        
+        // Only include alternateStreetIds if at least one alt street changed
+        if (Object.keys(altStreetUpdates).length > 0) {
+          const newAlternateStreetIds = [...(segment.alternateStreetIds || [])];
+          Object.keys(altStreetUpdates).forEach(index => {
+            newAlternateStreetIds[parseInt(index)] = altStreetUpdates[index];
+          });
+          updateParams.alternateStreetIds = newAlternateStreetIds;
+        }
+        
+        console.log(`${SCRIPT_NAME}: Updating segment ${segment.id}:`, updateParams);
+        await sdk.DataModel.Segments.updateAddress(updateParams);
+        console.log(`${SCRIPT_NAME}: Successfully updated segment ${segment.id}`);
+      } else {
+        console.warn(`${SCRIPT_NAME}: No changes to apply for segment ${segment.id}`);
+      }
+      
+      // Clear highlight and rescan after update
+      if (previewEnabled) {
+        sdk.Map.removeAllFeaturesFromLayer({ layerName: LAYER_NAME });
+      }
+      setTimeout(() => debouncedScan(), RESCAN_DELAY_AFTER_FIX);
+      
+    } catch (error) {
+      console.error(`${SCRIPT_NAME}: Error fixing segment ${segment.id}:`, error);
+      alert(`Failed to update segment ${segment.id}. Check console for details.`);
+    }
+  }
+  
+  /**
+   * Fix naming issues for all scanned segments
+   */
+  async function fixAllNames() {
+    const fixAllButton = cachedElements.fixAllButton;
+    
+    try {
+      updateProgress(true, 1);
+      if (fixAllButton) {
+        fixAllButton.disabled = true;
+        fixAllButton.textContent = 'Fixing...';
+      }
+      
+      let processed = 0;
+      let failed = 0;
+      const total = scannedSegments.length;
+      
+      for (const segment of scannedSegments) {
+        try {
+          await fixSegmentNames(segment);
+          processed++;
+        } catch (err) {
+          failed++;
+          console.error(`${SCRIPT_NAME}: Failed to fix segment ${segment.id}:`, err);
+        }
+        updateProgress(true, (processed / total) * 100);
+      }
+      
+      updateProgress(false);
+      
+      if (failed > 0) {
+        console.warn(`${SCRIPT_NAME}: Fixed ${processed} segments, ${failed} failed`);
+      }
+      
+      // Rescan to update results
+      setTimeout(() => {
+        debouncedScan();
+      }, RESCAN_DELAY_AFTER_FIX);
+      
+    } catch (error) {
+      console.error(`${SCRIPT_NAME}: Error fixing all names:`, error);
+      updateProgress(false);
+    } finally {
+      if (fixAllButton) {
+        fixAllButton.textContent = 'Fix All Names';
+      }
+    }
+  }
+
+  /**
+   * Initialize the highlight layer for previewing segments
+   */
+  function initLayer() {
+    try {
+      sdk.Map.addLayer({
+        layerName: LAYER_NAME,
+        styleRules: [
+          {
+            style: {
+              strokeColor: '#ff0',
+              strokeDashstyle: 'solid',
+              strokeWidth: 30
+            }
+          }
+        ]
+      });
+      
+      const zIndex = sdk.Map.getLayerZIndex({ layerName: 'roads' }) - 2;
+      sdk.Map.setLayerZIndex({ layerName: LAYER_NAME, zIndex });
+      sdk.Map.setLayerOpacity({ layerName: LAYER_NAME, opacity: 0.6 });
+      
+      console.log(`${SCRIPT_NAME}: Highlight layer initialized`);
+    } catch (error) {
+      console.error(`${SCRIPT_NAME}: Error initializing layer:`, error);
+    }
+  }
+  
+  /**
+   * Highlight a single segment on hover
+   * @param {number} segmentId - Segment ID to highlight
+   */
+  function highlightSegmentOnHover(segmentId) {
+    try {
+      const segment = sdk.DataModel.Segments.getById({ segmentId });
+      if (!segment || !segment.geometry) return;
+      
+      const features = [{
+        type: 'Feature',
+        id: 0,
+        geometry: segment.geometry
+      }];
+      
+      sdk.Map.removeAllFeaturesFromLayer({ layerName: LAYER_NAME });
+      sdk.Map.addFeaturesToLayer({ layerName: LAYER_NAME, features });
+    } catch (error) {
+      console.error(`${SCRIPT_NAME}: Error highlighting segment on hover:`, error);
+    }
+  }
+  
+  /**
+   * Clear hover highlight and restore preview highlights if enabled
+   */
+  function clearHoverHighlight() {
+    if (previewEnabled) {
+      // Restore all highlights if preview is enabled
+      highlightSegments();
+    } else {
+      // Clear all highlights
+      sdk.Map.removeAllFeaturesFromLayer({ layerName: LAYER_NAME });
+    }
+  }
+  
+  /**
+   * Highlight segments with issues on the map
+   */
+  function highlightSegments() {
+    try {
+      if (!previewEnabled) {
+        sdk.Map.removeAllFeaturesFromLayer({ layerName: LAYER_NAME });
+        return;
+      }
+      
+      const features = scannedSegments.map(segment => {
+        const seg = sdk.DataModel.Segments.getById({ segmentId: segment.id });
+        return {
+          type: 'Feature',
+          id: 0,
+          geometry: seg.geometry
+        };
+      });
+      
+      sdk.Map.removeAllFeaturesFromLayer({ layerName: LAYER_NAME });
+      sdk.Map.addFeaturesToLayer({ layerName: LAYER_NAME, features });
+      
+      console.log(`${SCRIPT_NAME}: Highlighted ${features.length} segments`);
+    } catch (error) {
+      console.error(`${SCRIPT_NAME}: Error highlighting segments:`, error);
+    }
+  }
+  
+  /**
+   * Handle preview checkbox change
+   */
+  function onPreviewChanged(event) {
+    previewEnabled = event.target.checked;
+    console.log(`${SCRIPT_NAME}: Preview ${previewEnabled ? 'enabled' : 'disabled'}`);
+    
+    if (previewEnabled) {
+      highlightSegments();
+    } else {
+      sdk.Map.removeAllFeaturesFromLayer({ layerName: LAYER_NAME });
+    }
+  }
+  
   function wmessa_bootstrap() {
     const wmeSdk = getWmeSdk({ scriptId: 'wme-road-name-helper-np', scriptName: 'WME Road Name Helper NP' });
     sdk = wmeSdk;
     sdk.Events.once({ eventName: 'wme-ready' }).then(() => {
       loadScriptUpdateMonitor();
+      initLayer();
       wmessa_init();
     });
   }
@@ -734,6 +1746,13 @@
 
   /*
 Changelog:
+2025.12.02.01
+- Added sidebar panel "RNH" (Road Name Helper) for scanning road names
+- Automatically scan on-screen segments while panning around
+- Display road names with issues including alt names
+- One-click fix for individual segments or all at once
+- Added Devanagari number mappings from रा१० through रा८०
+
 2025.06.18.01
 - Restored AH02 to AH2.
 
