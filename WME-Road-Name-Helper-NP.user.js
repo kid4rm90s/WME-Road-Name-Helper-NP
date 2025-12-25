@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2025.12.02.03
+// @version         2025.12.25.01
 // @author          Kid4rm90s 
 // @license         MIT
 // @match           *://*.waze.com/*editor*
@@ -19,12 +19,9 @@
 (function () {
   'use strict';
   const updateMessage = `
-Version 2025.12.02.03:
-- <strong>FIXED</strong>: <br>Layer z-index conflict with WME Segment City Tool (changed from roads-2 to roads-3)
-<br> - Highlight layer drifting above roads layer (added watchdog to maintain z-index) <br>
-- <strong>CHANGED</strong>: <br> Highlight color from yellow to orange (#ff8800) for better visual distinction <br>
-- Stroke width increased from 30 to 35 for improved visibility <br>
-- <strong>IMPROVED</strong>: Layer persistence and stability with continuous z-index monitoring
+Version 2025.12.25.01:
+- <strong>NEW</strong>: <br>Preview checkbox state now persists across page reloads <br>
+- <strong>IMPROVED</strong>: <br>User preference for "Preview (highlight segments with issues)" is remembered between sessions
 `;
   const SCRIPT_VERSION = GM_info.script.version.toString();
   const SCRIPT_NAME = GM_info.script.name;
@@ -44,7 +41,7 @@ Version 2025.12.02.03:
   let scannedSegments = [];
   let isScanning = false;
   let eventSubscriptions = [];
-  let previewEnabled = false;
+  let previewEnabled = localStorage.getItem('wme-rnh-preview-enabled') === 'true';
   
   // Cached UI elements
   const cachedElements = {
@@ -1713,6 +1710,7 @@ Version 2025.12.02.03:
    */
   function onPreviewChanged(event) {
     previewEnabled = event.target.checked;
+    localStorage.setItem('wme-rnh-preview-enabled', previewEnabled);
     console.log(`${SCRIPT_NAME}: Preview ${previewEnabled ? 'enabled' : 'disabled'}`);
     
     if (previewEnabled) {

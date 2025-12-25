@@ -1,5 +1,15 @@
 # Changelog - WME Road Name Helper NP
 
+## Version 2025.12.25.01 (December 25, 2025)
+
+### ✨ New Features
+- **Preview State Persistence**: The "Preview (highlight segments with issues)" checkbox state is now saved to localStorage and persists across page reloads and browser sessions
+
+### 🔧 Improvements
+- **User Experience**: User preferences for preview highlighting are now remembered, eliminating the need to re-enable the feature after each page reload
+
+---
+
 ## Version 2025.12.02.03 (December 2, 2025)
 
 ### 🐛 Bug Fixes
