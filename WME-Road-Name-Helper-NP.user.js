@@ -25,7 +25,7 @@ Version 2026.01.18.01:
 `;
   const scriptVersion = GM_info.script.version.toString();
   const scriptName = GM_info.script.name;
-  const downloadUrl = GM_info.script.downloadURL;
+  const downloadUrl = 'https://greasyfork.org/scripts/538171-wme-road-name-helper-np/code/wme-road-name-helper-np.user.js';
   const forumURL = 'https://greasyfork.org/en/scripts/538171-wme-road-name-helper-np/feedback';
   const SCRIPT_ID = 'wme-road-name-helper-np';
   const SCAN_DEBOUNCE_DELAY = 200; // 200ms delay after map movement stops
