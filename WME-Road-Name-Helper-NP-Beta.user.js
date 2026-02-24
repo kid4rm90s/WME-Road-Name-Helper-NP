@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP Beta
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2026.02.24.01
+// @version         2026.02.24.02
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
@@ -21,8 +21,12 @@
 (function () {
   ('use strict');
   const updateMessage = `
-Version 2026.02.24.01:
-<strong>New Features:</strong><br> - Added a "Translate to Nepali" button in the UI that translates the current road name to Nepali using Google Translate API, with special handling for certain keywords like "Road" and "Ring Road".<br> - The translation function includes special-case rules for common road-related terms to ensure more accurate translations (e.g., "Ring Road" becomes "चक्रपथ").<br> - If a special-case translation is applied, it will recursively check if further translation is needed, allowing for multi-step translations (e.g., "Ring Road" -> "चक्रपथ" without leaving any English words untranslated).<br>
+Version 2026.02.24.02:
+<strong>New Features & Fixes:</strong><br>
+- The "नेपा." button now uses the WME SDK to add the translated Nepali name as an alternative name for the selected segment (no more DOM manipulation).<br>
+- The previous DOM-based alt name update logic is commented out for reference.<br>
+- Translation logic now ensures that if the original text contains " - " (space-hyphen-space), the translated Nepali output will also have spaces before and after the hyphen, matching the English style.<br>
+- Various bug fixes and improvements.<br>
 `;
   const scriptVersion = GM_info.script.version.toString();
   const scriptName = GM_info.script.name;
@@ -585,7 +589,7 @@ Version 2026.02.24.01:
     abbrContainer.innerHTML =
       '<div class="WMESSA_icon" title="WME Standard Suffix Abbreviations"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M4.5 2A2.5 2.5 0 0 0 2 4.5v2.879a2.5 2.5 0 0 0 .732 1.767l4.5 4.5a2.5 2.5 0 0 0 3.536 0l2.878-2.878a2.5 2.5 0 0 0 0-3.536l-4.5-4.5A2.5 2.5 0 0 0 7.38 2H4.5ZM5 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd" /></svg></div>' +
       '<div id="WMESSA_output">Loading...</div>' +
-      '<button id="WMESSA_translate_btn" title="Translate to Nepali" style="margin-left:8px;display:flex;align-items:center;gap:2px;padding:2px 6px;font-size:13px;border:1px solid #bbb;border-radius:4px;cursor:pointer;">' +
+      '<button id="WMESSA_translate_btn" title="This will add translated name as Alt name." style="margin-left:8px;display:flex;align-items:center;gap:2px;padding:2px 6px;font-size:13px;border:1px solid #bbb;border-radius:4px;cursor:pointer;">' +
       '<i class="fa fa-language" aria-hidden="true" style="font-size:14px;"></i>' +
     'नेपा. </button>';
     const statusTextContainer = element.shadowRoot.querySelector('.status-text-container');
@@ -691,6 +695,14 @@ Version 2026.02.24.01:
               // Post-translation fix: Replace 'रोड' with 'सडक'
               translated = translated.replace(/\u0930\u094B\u0921/g, 'सडक'); // Unicode for 'रोड'
               translated = translated.replace(/रोड/g, 'सडक'); // Fallback for direct string
+
+              // Ensure spaces before and after hyphens, matching English style
+              // Only if the original input had ' - ' (space-hyphen-space), enforce it in the output
+              if (/\s-\s/.test(text)) {
+                // Remove any existing spaces around hyphens, then add single spaces
+                translated = translated.replace(/\s*-\s*/g, ' - ');
+              }
+
               console.log('[WMESSA] Translation result:', { input: text, replaced, output: translated });
               resolve(translated);
             },
@@ -753,6 +765,49 @@ Version 2026.02.24.01:
         const translated = await translateToNepali(currentValue);
         translateBtn.textContent = 'नेपा.';
         translateBtn.disabled = false;
+
+        // --- SDK-based alt name update ---
+        try {
+          // Get selected segments from SDK
+          const selection = sdk.Editing.getSelection();
+          if (!selection || !selection.ids || selection.ids.length === 0) {
+            alert('No segment selected!');
+            return;
+          }
+          const segmentId = selection.ids[0];
+          const segment = sdk.DataModel.Segments.getById({ segmentId });
+          if (!segment) {
+            alert('Selected segment not found!');
+            return;
+          }
+          // Get cityId from primary street
+          const primaryStreet = sdk.DataModel.Streets.getById({ streetId: segment.primaryStreetId });
+          const cityId = primaryStreet && primaryStreet.cityId ? primaryStreet.cityId : null;
+          if (!cityId) {
+            alert('Could not determine city for alt name.');
+            return;
+          }
+          // Check if alt street with this name already exists
+          let altStreet = sdk.DataModel.Streets.getStreet({ cityId, streetName: translated });
+          if (!altStreet) {
+            altStreet = sdk.DataModel.Streets.addStreet({ streetName: translated, cityId });
+          }
+          // Add to alternateStreetIds if not already present
+          let alternateStreetIds = Array.isArray(segment.alternateStreetIds) ? [...segment.alternateStreetIds] : [];
+          if (!alternateStreetIds.includes(altStreet.id)) {
+            alternateStreetIds.push(altStreet.id);
+            await sdk.DataModel.Segments.updateAddress({ segmentId, alternateStreetIds });
+            WazeToastr.Alerts.success(`${scriptName}`, `Nepali alt name "${translated}" added successfully!`);
+          } else {
+            WazeToastr.Alerts.info(`${scriptName}`, `Nepali alt name "${translated}" already present.`);
+          }
+        } catch (err) {
+          console.error(`Failed to add Nepali alt name "${translated}" via SDK:`, err);
+          alert(`Failed to add Nepali alt name "${translated}". See console for details.`);
+        }
+
+        // --- DOM-based alt name update (deprecated, now commented out) ---
+        /*
         // Try to find the alt and primary name fields in the same edit panel as the current element
         let altInput = null;
         let primaryInput = null;
@@ -818,6 +873,7 @@ Version 2026.02.24.01:
         } else {
           alert('Name field not found!');
         }
+        */
       });
     }
 
@@ -2025,6 +2081,14 @@ Version 2026.02.24.01:
 
   /*
 Changelog:
+Version 2026.02.24.02:
+<strong>New Features & Fixes:</strong><br>
+- The "नेपा." button now uses the WME SDK to add the translated Nepali name as an alternative name for the selected segment (no more DOM manipulation).<br>
+- The previous DOM-based alt name update logic is commented out for reference.<br>
+- Translation logic now ensures that if the original text contains " - " (space-hyphen-space), the translated Nepali output will also have spaces before and after the hyphen, matching the English style.<br>
+- Various bug fixes and improvements.<br>
+Version 2026.02.24.01:
+<strong>New Features:</strong><br> - Added a "Translate to Nepali" button in the UI that translates the current road name to Nepali using Google Translate API, with special handling for certain keywords like "Road" and "Ring Road".<br> - The translation function includes special-case rules for common road-related terms to ensure more accurate translations (e.g., "Ring Road" becomes "चक्रपथ").<br> - If a special-case translation is applied, it will recursively check if further translation is needed, allowing for multi-step translations (e.g., "Ring Road" -> "चक्रपथ" without leaving any English words untranslated).<br>
 Version 2026.01.18.01:
 - Fixed name checking for NH39 - KTM Ring Rd.
 - Fixed for wrong suggestion for KTM Ring Rd.
