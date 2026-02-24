@@ -13,8 +13,8 @@
 // @connect         raw.githubusercontent.com
 // @namespace       https://greasyfork.org/users/1087400
 // @require         https://greasyfork.org/scripts/560385/code/WazeToastr.js
-// @downloadURL     https://raw.githubusercontent.com/kid4rm90s/WME-Road-Name-Helper-NP/main/WME-Road-Name-Helper-NP-Beta.user.js
-// @updateURL       https://raw.githubusercontent.com/kid4rm90s/WME-Road-Name-Helper-NP/main/WME-Road-Name-Helper-NP-Beta.user.js
+// @downloadURL     https://raw.githubusercontent.com/kid4rm90s/WME-Road-Name-Helper-NP/Beta/WME-Road-Name-Helper-NP-Beta.user.js
+// @updateURL       https://raw.githubusercontent.com/kid4rm90s/WME-Road-Name-Helper-NP/Beta/WME-Road-Name-Helper-NP-Beta.user.js
 
 // ==/UserScript==
 
@@ -27,7 +27,7 @@ Version 2026.02.24.01:
   const scriptVersion = GM_info.script.version.toString();
   const scriptName = GM_info.script.name;
 												  
-  const downloadUrl = 'https://raw.githubusercontent.com/kid4rm90s/WME-Road-Name-Helper-NP/main/WME-Road-Name-Helper-NP-Beta.user.js';
+  const downloadUrl = 'https://raw.githubusercontent.com/kid4rm90s/WME-Road-Name-Helper-NP/Beta/WME-Road-Name-Helper-NP-Beta.user.js';
   const forumURL = 'https://github.com/kid4rm90s/WME-Road-Name-Helper-NP/issues';
   const SCRIPT_ID = 'wme-road-name-helper-np-beta';
   const SCAN_DEBOUNCE_DELAY = 200; // 200ms delay after map movement stops
