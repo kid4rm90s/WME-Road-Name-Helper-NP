@@ -585,10 +585,11 @@ Version 2026.02.23.01:
     abbrContainer.innerHTML =
       '<div class="WMESSA_icon" title="WME Standard Suffix Abbreviations"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M4.5 2A2.5 2.5 0 0 0 2 4.5v2.879a2.5 2.5 0 0 0 .732 1.767l4.5 4.5a2.5 2.5 0 0 0 3.536 0l2.878-2.878a2.5 2.5 0 0 0 0-3.536l-4.5-4.5A2.5 2.5 0 0 0 7.38 2H4.5ZM5 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd" /></svg></div>' +
       '<div id="WMESSA_output">Loading...</div>' +
-      '<button id="WMESSA_translate_btn" title="Translate to Nepali" style="margin-left:8px;display:flex;align-items:center;gap:2px;padding:2px 6px;font-size:13px;background:#f5f5f5;border:1px solid #bbb;border-radius:4px;cursor:pointer;">' +
-      '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M4.5 1a.5.5 0 0 1 .5.5V3h6V1.5a.5.5 0 0 1 1 0V3h1.5A1.5 1.5 0 0 1 15 4.5v7A1.5 1.5 0 0 1 13.5 13H2.5A1.5 1.5 0 0 1 1 11.5v-7A1.5 1.5 0 0 1 2.5 3H4V1.5a.5.5 0 0 1 .5-.5zm-2 3A.5.5 0 0 0 2 4.5v7a.5.5 0 0 0 .5.5h11a.5.5 0 0 0 .5-.5v-7a.5.5 0 0 0-.5-.5h-11z"/><path d="M8.5 6.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 0 1H9v.5a.5.5 0 0 1-1 0V8h-.5a.5.5 0 0 1 0-1H8v-.5a.5.5 0 0 1 .5-.5z"/></svg>' +
-      'नेपा. </button>';
-
+      '<button id="WMESSA_translate_btn" title="Translate to Nepali" style="margin-left:8px;display:flex;align-items:center;gap:2px;padding:2px 6px;font-size:13px;border:1px solid #bbb;border-radius:4px;cursor:pointer;">' +
+// Google Translate SVG
+    '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 48 48">' +
+    '<path fill="#4285F4" d="M41.4 12.3c-.4-1.1-1.4-1.8-2.6-1.8h-11L26 8.7c-.5-1-1.5-1.7-2.7-1.7H10.5C8 7 6 9 6 11.5v25c0 2.5 2 4.5 4.5 4.5h16.3l1.8 1.8c.5.5 1.2.7 1.9.7 1.5 0 2.7-1.2 2.7-2.7v-1.8h8.3c2.5 0 4.5-2 4.5-4.5v-20c0-1-.5-1.9-1.3-2.2zM21.1 27.5c-.8 2.3-2.5 4.3-4.8 5.6-1.1.6-2.4.9-3.7.9-5.1 0-9.2-4.1-9.2-9.2s4.1-9.2 9.2-9.2c2.4 0 4.6.9 6.2 2.5l-2.6 2.6c-1-.9-2.2-1.4-3.6-1.4-3 0-5.5 2.5-5.5 5.5s2.5 5.5 5.5 5.5c2.4 0 4.3-1.6 4.9-3.7h-4.9v-3.7h8.6c.1.5.1 1.1.1 1.7 0 1-.1 2.1-.4 3zM39 37h-9V21h9v16z"/></svg>' +
+    'नेपा. </button>';
     const statusTextContainer = element.shadowRoot.querySelector('.status-text-container');
     if (!statusTextContainer) {
       console.warn('WMESSA: .status-text-container not found. UI will not be displayed.');
@@ -636,15 +637,39 @@ Version 2026.02.23.01:
         }
         return match;
       });
+      const hasLatin = /[A-Za-z]/.test(replaced);
+      const hasDevanagari = /[\u0900-\u097F]/.test(replaced);
+      let sourceLang = 'auto';
+      if (hasLatin && !hasDevanagari) {
+        sourceLang = 'en';
+      } else if (hasDevanagari && !hasLatin) {
+        sourceLang = 'ne';
+      }
       // Google Translate API (unofficial, public endpoint)
       try {
-        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ne&dt=t&q=${encodeURIComponent(replaced)}`;
+        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=ne&dt=t&q=${encodeURIComponent(replaced)}`;
+        console.debug('WMESSA translate request', {
+          originalText: text,
+          translatedInput: replaced,
+          sourceLang,
+          url,
+        });
         return await new Promise((resolve) => {
           GM_xmlhttpRequest({
             method: 'GET',
             url: url,
             responseType: 'json',
             onload: function(response) {
+              if (response.status < 200 || response.status >= 300) {
+                console.error('WMESSA translate HTTP error', {
+                  status: response.status,
+                  statusText: response.statusText,
+                  url,
+                  responseText: response.responseText,
+                });
+                resolve(text);
+                return;
+              }
               let res = response.response;
               if (typeof res === 'string') {
                 try { res = JSON.parse(res); } catch {}
@@ -657,12 +682,14 @@ Version 2026.02.23.01:
               translated = translated.replace(/रोड/g, 'सडक'); // Fallback for direct string
               resolve(translated);
             },
-            onerror: function() {
+            onerror: function(error) {
+              console.error('WMESSA translate request failed', { error, url, originalText: text, translatedInput: replaced, sourceLang });
               resolve(text);
             }
           });
         });
       } catch (e) {
+        console.error('WMESSA translate exception', { error: e, originalText: text, translatedInput: replaced, sourceLang });
         return text;
       }
     }
