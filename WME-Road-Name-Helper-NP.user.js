@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2026.01.18.01
+// @version         2026.03.01.01
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
@@ -9,6 +9,7 @@
 // @connect         greasyfork.org
 // @grant           GM_xmlhttpRequest
 // @grant           GM_addStyle
+// @connect         translate.googleapis.com
 // @namespace       https://greasyfork.org/users/1087400
 // @require         https://greasyfork.org/scripts/560385/code/WazeToastr.js
 // @downloadURL     https://update.greasyfork.org/scripts/538171/WME%20Road%20Name%20Helper%20NP.user.js
@@ -20,8 +21,12 @@
 (function () {
   ('use strict');
   const updateMessage = `
-Version 2026.01.18.01:
-<strong>Fixed :</strong><br> - Fixed name checking for NH39 - KTM Ring Rd.<br>- Fixed for wrong suggestion for KTM Ring Rd.<br>- Fixed for NH77 - Bharatpur Ringroad now suggested as NH77 - Bharatpur Ring Rd.<br>
+Version 2026.03.01.01:
+<strong>New Features & Fixes:</strong><br>
+- The "नेपा." button now uses the WME SDK to add the translated Nepali name as an alternative name for the selected segment (no more DOM manipulation).<br>
+- The previous DOM-based alt name update logic is commented out for reference.<br>
+- Translation logic now ensures that if the original text contains " - " (space-hyphen-space), the translated Nepali output will also have spaces before and after the hyphen, matching the English style.<br>
+- Various bug fixes and improvements.<br>
 `;
   const scriptVersion = GM_info.script.version.toString();
   const scriptName = GM_info.script.name;
@@ -579,10 +584,13 @@ Version 2026.01.18.01:
   function wmessa_monitor(element) {
     let abbrContainer = document.createElement('div');
     abbrContainer.id = 'WMESSA_container';
+
     abbrContainer.innerHTML =
       '<div class="WMESSA_icon" title="WME Standard Suffix Abbreviations"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M4.5 2A2.5 2.5 0 0 0 2 4.5v2.879a2.5 2.5 0 0 0 .732 1.767l4.5 4.5a2.5 2.5 0 0 0 3.536 0l2.878-2.878a2.5 2.5 0 0 0 0-3.536l-4.5-4.5A2.5 2.5 0 0 0 7.38 2H4.5ZM5 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd" /></svg></div>' +
-      '<div id="WMESSA_output">Loading...</div>';
-
+      '<div id="WMESSA_output">Loading...</div>' +
+      '<button id="WMESSA_translate_btn" title="This will add translated name as Alt name." style="margin-left:8px;display:flex;align-items:center;gap:2px;padding:2px 6px;font-size:13px;border:1px solid #bbb;border-radius:4px;cursor:pointer;">' +
+      '<i class="fa fa-language" aria-hidden="true" style="font-size:14px;"></i>' +
+    'नेपा. </button>';
     const statusTextContainer = element.shadowRoot.querySelector('.status-text-container');
     if (!statusTextContainer) {
       console.warn('WMESSA: .status-text-container not found. UI will not be displayed.');
@@ -590,11 +598,289 @@ Version 2026.01.18.01:
     }
     statusTextContainer.insertBefore(abbrContainer, statusTextContainer.firstChild);
 
+
     let abbrOutput = abbrContainer.querySelector('#WMESSA_output');
+    let translateBtn = abbrContainer.querySelector('#WMESSA_translate_btn');
+
+
+    // --- Translation logic using Google Translate API, preserving tokens/placeholders ---
+    async function translateToNepali(text) {
+              console.log('[WMESSA] Translation requested:', { input: text });
+            // Special-case replacements (add more as needed)
+            const specialCases = [
+              { regex: /\bRing\s*(Rd|Road)\b/gi, replace: 'चक्रपथ' },
+              { regex: /\b(Rd|Road)\b/gi, replace: 'सडक' },
+              // Add more rules here: { regex: /pattern/gi, replace: 'replacement' },
+            ];
+            let specialText = text;
+            let specialMatched = false;
+            for (const rule of specialCases) {
+              if (rule.regex.test(specialText)) {
+                specialText = specialText.replace(rule.regex, rule.replace);
+                specialMatched = true;
+              }
+            }
+            if (specialMatched) {
+              console.log('[WMESSA] Special-case translation:', { input: text, output: specialText });
+              // Recursively translate the special-case output if it changed
+              if (specialText !== text) {
+                return await translateToNepali(specialText);
+              }
+              return specialText;
+            }
+      if (!text.trim()) {
+        console.log('[WMESSA] Empty input, skipping translation.');
+        return text;
+      }
+      // Simple token preservation: skip translation for {...} and [signal] blocks
+      const tokenRegex = /({[^}]+}|\[signal\][^\[]*\[\/signal\])/g;
+      let tokens = [];
+      let replaced = text.replace(tokenRegex, (m) => {
+        tokens.push(m);
+        return `__TOKEN_${tokens.length - 1}__`;
+      });
+
+      // Expand common abbreviations before translation (e.g., Rd -> Road)
+      // Use the wmessa_approvedAbbr mapping
+      replaced = replaced.replace(/\b([A-Za-z]{2,5})\b/g, (match) => {
+        // Only expand if in the abbreviation list and not all uppercase (to avoid e.g. NH for highways)
+        if (wmessa_approvedAbbr[match] && match !== match.toUpperCase()) {
+          return wmessa_approvedAbbr[match];
+        }
+        return match;
+      });
+      const hasLatin = /[A-Za-z]/.test(replaced);
+      const hasDevanagari = /[\u0900-\u097F]/.test(replaced);
+      let sourceLang = 'auto';
+      if (hasLatin && !hasDevanagari) {
+        sourceLang = 'en';
+      } else if (hasDevanagari && !hasLatin) {
+        sourceLang = 'ne';
+      }
+      // Google Translate API (unofficial, public endpoint)
+      console.log('[WMESSA] Translation API call:', { replaced, sourceLang });
+      try {
+        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=ne&dt=t&q=${encodeURIComponent(replaced)}`;
+        console.debug('WMESSA translate request', {
+          originalText: text,
+          translatedInput: replaced,
+          sourceLang,
+          url,
+        });
+        return await new Promise((resolve) => {
+          GM_xmlhttpRequest({
+            method: 'GET',
+            url: url,
+            responseType: 'json',
+            onload: function(response) {
+              if (response.status < 200 || response.status >= 300) {
+                console.error('WMESSA translate HTTP error', {
+                  status: response.status,
+                  statusText: response.statusText,
+                  url,
+                  responseText: response.responseText,
+                });
+                resolve(text);
+                return;
+              }
+              let res = response.response;
+              console.log('[WMESSA] Translation API response:', { url, response: res });
+              if (typeof res === 'string') {
+                try { res = JSON.parse(res); } catch {}
+              }
+              let translated = Array.isArray(res) && Array.isArray(res[0]) ? res[0].map(seg => Array.isArray(seg) ? seg[0] : '').join('') : (res?.[0]?.[0]?.[0] ?? replaced);
+              // Restore tokens
+              translated = translated.replace(/__TOKEN_(\d+)__/g, (_, i) => tokens[+i] || '');
+              // Post-translation fix: Replace 'रोड' with 'सडक'
+              translated = translated.replace(/\u0930\u094B\u0921/g, 'सडक'); // Unicode for 'रोड'
+              translated = translated.replace(/रोड/g, 'सडक'); // Fallback for direct string
+
+              // Ensure spaces before and after hyphens, matching English style
+              // Only if the original input had ' - ' (space-hyphen-space), enforce it in the output
+              if (/\s-\s/.test(text)) {
+                // Remove any existing spaces around hyphens, then add single spaces
+                translated = translated.replace(/\s*-\s*/g, ' - ');
+              }
+
+              console.log('[WMESSA] Translation result:', { input: text, replaced, output: translated });
+              resolve(translated);
+            },
+            onerror: function(error) {
+              console.error('[WMESSA] Translation API error:', { error, url, input: text, replaced, sourceLang });
+              console.error('WMESSA translate request failed', { error, url, originalText: text, translatedInput: replaced, sourceLang });
+              resolve(text);
+            }
+          });
+        });
+      } catch (e) {
+        console.error('[WMESSA] Translation exception:', { error: e, input: text, replaced, sourceLang });
+        return text;
+      }
+    }
+
+
+    // --- Inline Nepali suggestion element (async) ---
+    let nepaliSuggestion = document.createElement('span');
+    nepaliSuggestion.id = 'WMESSA_nepali_suggestion';
+    nepaliSuggestion.style.cssText = 'margin-left:10px;color:#1565c0;font-size:0.95em;font-style:italic;';
+    abbrContainer.appendChild(nepaliSuggestion);
+
+    let lastSuggestValue = '';
+    async function updateNepaliSuggestion() {
+      const currentValue = element.value.trim();
+      if (!currentValue) {
+        nepaliSuggestion.textContent = '';
+        lastSuggestValue = '';
+        return;
+      }
+      // Avoid duplicate requests for same value
+      if (currentValue === lastSuggestValue) return;
+      lastSuggestValue = currentValue;
+      nepaliSuggestion.textContent = 'नेपा.: Translating...';
+      const translated = await translateToNepali(currentValue);
+      if (translated && translated !== currentValue) {
+        nepaliSuggestion.textContent = `नेपा.: ${translated}`;
+      } else {
+        nepaliSuggestion.textContent = '';
+      }
+    }
+
+    // Update suggestion on input (debounced async)
+    let suggestTimeout;
+    element.addEventListener('input', () => {
+      clearTimeout(suggestTimeout);
+      suggestTimeout = setTimeout(updateNepaliSuggestion, 350);
+    });
+    // Initial update
+    updateNepaliSuggestion();
+
+    // --- Add translation button click handler (async) ---
+    if (translateBtn) {
+      translateBtn.addEventListener('click', async function() {
+        const currentValue = element.value.trim();
+        if (!currentValue) return;
+        translateBtn.disabled = true;
+        translateBtn.textContent = 'Translating...';
+        const translated = await translateToNepali(currentValue);
+        translateBtn.textContent = 'नेपा.';
+        translateBtn.disabled = false;
+
+        // --- SDK-based alt name update ---
+        try {
+          // Get selected segments from SDK
+          const selection = sdk.Editing.getSelection();
+          if (!selection || !selection.ids || selection.ids.length === 0) {
+            alert('No segment selected!');
+            return;
+          }
+          const segmentId = selection.ids[0];
+          const segment = sdk.DataModel.Segments.getById({ segmentId });
+          if (!segment) {
+            alert('Selected segment not found!');
+            return;
+          }
+          // Get cityId from primary street
+          const primaryStreet = sdk.DataModel.Streets.getById({ streetId: segment.primaryStreetId });
+          const cityId = primaryStreet && primaryStreet.cityId ? primaryStreet.cityId : null;
+          if (!cityId) {
+            alert('Could not determine city for alt name.');
+            return;
+          }
+          // Check if alt street with this name already exists
+          let altStreet = sdk.DataModel.Streets.getStreet({ cityId, streetName: translated });
+          if (!altStreet) {
+            altStreet = sdk.DataModel.Streets.addStreet({ streetName: translated, cityId });
+          }
+          // Add to alternateStreetIds if not already present
+          let alternateStreetIds = Array.isArray(segment.alternateStreetIds) ? [...segment.alternateStreetIds] : [];
+          if (!alternateStreetIds.includes(altStreet.id)) {
+            alternateStreetIds.push(altStreet.id);
+            await sdk.DataModel.Segments.updateAddress({ segmentId, alternateStreetIds });
+            WazeToastr.Alerts.success(`${scriptName}`, `Nepali alt name "${translated}" added successfully!`);
+          } else {
+            WazeToastr.Alerts.info(`${scriptName}`, `Nepali alt name "${translated}" already present.`);
+          }
+        } catch (err) {
+          console.error(`Failed to add Nepali alt name "${translated}" via SDK:`, err);
+          alert(`Failed to add Nepali alt name "${translated}". See console for details.`);
+        }
+
+        // --- DOM-based alt name update (deprecated, now commented out) ---
+        /*
+        // Try to find the alt and primary name fields in the same edit panel as the current element
+        let altInput = null;
+        let primaryInput = null;
+        let root = element.getRootNode();
+        if (root && root.host && root.host.closest) {
+          let panel = root.host.closest('.edit-panel, .edit-alt-street-card');
+          if (panel) {
+            // Try all wz-autocomplete.alt-street-name in this panel
+            let altComps = panel.querySelectorAll('wz-autocomplete.alt-street-name');
+            for (let comp of altComps) {
+              if (comp.shadowRoot) {
+                let wzInput = comp.shadowRoot.querySelector('wz-text-input');
+                if (wzInput) {
+                  altInput = wzInput;
+                  break;
+                }
+              }
+            }
+            // Try all wz-autocomplete.street-name in this panel
+            let primaryComps = panel.querySelectorAll('wz-autocomplete.street-name');
+            for (let comp of primaryComps) {
+              if (comp.shadowRoot) {
+                let wzInput = comp.shadowRoot.querySelector('wz-text-input');
+                if (wzInput) {
+                  primaryInput = wzInput;
+                  break;
+                }
+              }
+            }
+          }
+        }
+        // Fallback: try global selectors as before
+        if (!altInput) {
+          let altComps = document.querySelectorAll('wz-autocomplete.alt-street-name');
+          for (let comp of altComps) {
+            if (comp.shadowRoot) {
+              let wzInput = comp.shadowRoot.querySelector('wz-text-input');
+              if (wzInput) {
+                altInput = wzInput;
+                break;
+              }
+            }
+          }
+        }
+        if (!primaryInput) {
+          let primaryComps = document.querySelectorAll('wz-autocomplete.street-name');
+          for (let comp of primaryComps) {
+            if (comp.shadowRoot) {
+              let wzInput = comp.shadowRoot.querySelector('wz-text-input');
+              if (wzInput) {
+                primaryInput = wzInput;
+                break;
+              }
+            }
+          }
+        }
+        // Prefer alt if present, else primary
+        let targetInput = altInput || primaryInput;
+        if (targetInput) {
+          targetInput.value = translated;
+          targetInput.dispatchEvent(new Event('input', { bubbles: true }));
+          targetInput.dispatchEvent(new Event('change', { bubbles: true }));
+        } else {
+          alert('Name field not found!');
+        }
+        */
+      });
+    }
 
     const css = [
       '.status-text-container {width: calc(100% + ' +
         (document.querySelector('#edit-panel .address-edit-card .street-name-row .tts-playback') ? document.querySelector('#edit-panel .address-edit-card .street-name-row .tts-playback').offsetWidth : 0) +
+																											   
+				
         'px); display: flex; flex-direction: column-reverse;}',
       '#WMESSA_container {display: flex; align-items: center; flex-grow: 1; margin-top: var(--wz-label-margin, 8px); padding: 0 2px; border-radius: 5px; background: #ffffff; color: #ffffff; gap: 5px; cursor: default; transition: background 0.25s linear, color 0.25s linear; font-size: 0.9em;}',
       '#WMESSA_output {color: #000000; white-space: pre-wrap; flex-grow: 1;}',
@@ -1785,6 +2071,14 @@ Version 2026.01.18.01:
   }
   /*
 Changelog:
+Version 2026.02.24.02:
+<strong>New Features & Fixes:</strong><br>
+- The "नेपा." button now uses the WME SDK to add the translated Nepali name as an alternative name for the selected segment (no more DOM manipulation).<br>
+- The previous DOM-based alt name update logic is commented out for reference.<br>
+- Translation logic now ensures that if the original text contains " - " (space-hyphen-space), the translated Nepali output will also have spaces before and after the hyphen, matching the English style.<br>
+- Various bug fixes and improvements.<br>
+Version 2026.02.24.01:
+<strong>New Features:</strong><br> - Added a "Translate to Nepali" button in the UI that translates the current road name to Nepali using Google Translate API, with special handling for certain keywords like "Road" and "Ring Road".<br> - The translation function includes special-case rules for common road-related terms to ensure more accurate translations (e.g., "Ring Road" becomes "चक्रपथ").<br> - If a special-case translation is applied, it will recursively check if further translation is needed, allowing for multi-step translations (e.g., "Ring Road" -> "चक्रपथ" without leaving any English words untranslated).<br>
 Version 2026.01.18.01:
 - Fixed name checking for NH39 - KTM Ring Rd.
 - Fixed for wrong suggestion for KTM Ring Rd.
