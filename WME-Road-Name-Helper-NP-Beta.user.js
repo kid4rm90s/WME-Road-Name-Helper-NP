@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP Beta
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2026.02.24.02
+// @version         2026.03.01.02
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
@@ -21,7 +21,7 @@
 (function () {
   ('use strict');
   const updateMessage = `
-Version 2026.02.24.02:
+Version 2026.03.01.02:
 <strong>New Features & Fixes:</strong><br>
 - The "नेपा." button now uses the WME SDK to add the translated Nepali name as an alternative name for the selected segment (no more DOM manipulation).<br>
 - The previous DOM-based alt name update logic is commented out for reference.<br>
@@ -38,7 +38,7 @@ Version 2026.02.24.02:
   const PROGRESS_UPDATE_THROTTLE = 10; // Update progress every N segments
   const RESCAN_DELAY_AFTER_FIX = 300; // Delay before rescanning after fix
   const MAX_SEGMENTS_TO_DISPLAY = 100; // Limit displayed segments for performance
-  const LAYER_NAME = 'WME Road Name Helper NP Beta'; // Layer name for highlighting
+  const LAYER_NAME = `${scriptName}`; // Layer name for highlighting
 
   let sdk;
   let currentMapExtent = null;
@@ -1136,7 +1136,7 @@ Version 2026.02.24.02:
 
       // Set tab label
       tabLabel.textContent = 'RNH';
-      tabLabel.title = 'Road Name Helper';
+      tabLabel.title = `${scriptName}`;
 
       // Create main container
       const container = document.createElement('div');
@@ -1144,7 +1144,7 @@ Version 2026.02.24.02:
 
       // Title
       const title = document.createElement('wz-overline');
-      title.textContent = 'Road Name Helper';
+      title.textContent = `${scriptName}`;
       title.style.marginBottom = '10px';
       container.appendChild(title);
 
@@ -2040,7 +2040,7 @@ Version 2026.02.24.02:
   }
 
   function wmessa_bootstrap() {
-    const wmeSdk = getWmeSdk({ scriptId: 'wme-road-name-helper-np-beta', scriptName: 'WME Road Name Helper NP Beta' });
+    const wmeSdk = getWmeSdk({ scriptId: `${SCRIPT_ID}`, scriptName: `${scriptName}` });
     sdk = wmeSdk;
     sdk.Events.once({ eventName: 'wme-ready' }).then(() => {
       initLayer();
