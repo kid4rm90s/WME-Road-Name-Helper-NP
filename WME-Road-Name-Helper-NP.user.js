@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2026.03.01.01
+// @version         2026.03.01.02
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
@@ -21,7 +21,7 @@
 (function () {
   ('use strict');
   const updateMessage = `
-Version 2026.03.01.01:
+Version 2026.03.01.02:
 <strong>New Features & Fixes:</strong><br>
 - The "नेपा." button now uses the WME SDK to add the translated Nepali name as an alternative name for the selected segment (no more DOM manipulation).<br>
 - The previous DOM-based alt name update logic is commented out for reference.<br>
