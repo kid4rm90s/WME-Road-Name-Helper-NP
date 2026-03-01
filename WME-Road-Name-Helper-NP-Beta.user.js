@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name            WME Road Name Helper NP
+// @name            WME Road Name Helper NP Beta
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2026.03.01.01
+// @version         2026.02.24.02
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
@@ -10,18 +10,18 @@
 // @grant           GM_xmlhttpRequest
 // @grant           GM_addStyle
 // @connect         translate.googleapis.com
+// @connect         raw.githubusercontent.com
 // @namespace       https://greasyfork.org/users/1087400
 // @require         https://greasyfork.org/scripts/560385/code/WazeToastr.js
-// @downloadURL     https://update.greasyfork.org/scripts/538171/WME%20Road%20Name%20Helper%20NP.user.js
-// @updateURL       https://update.greasyfork.org/scripts/538171/WME%20Road%20Name%20Helper%20NP.meta.js
-// @connect         greasyfork.org
+// @downloadURL     https://raw.githubusercontent.com/kid4rm90s/WME-Road-Name-Helper-NP/Beta/WME-Road-Name-Helper-NP-Beta.user.js
+// @updateURL       https://raw.githubusercontent.com/kid4rm90s/WME-Road-Name-Helper-NP/Beta/WME-Road-Name-Helper-NP-Beta.user.js
 
 // ==/UserScript==
 
 (function () {
   ('use strict');
   const updateMessage = `
-Version 2026.03.01.01:
+Version 2026.02.24.02:
 <strong>New Features & Fixes:</strong><br>
 - The "नेपा." button now uses the WME SDK to add the translated Nepali name as an alternative name for the selected segment (no more DOM manipulation).<br>
 - The previous DOM-based alt name update logic is commented out for reference.<br>
@@ -30,14 +30,15 @@ Version 2026.03.01.01:
 `;
   const scriptVersion = GM_info.script.version.toString();
   const scriptName = GM_info.script.name;
-  const downloadUrl = 'https://greasyfork.org/scripts/538171-wme-road-name-helper-np/code/wme-road-name-helper-np.user.js';
-  const forumURL = 'https://greasyfork.org/en/scripts/538171-wme-road-name-helper-np/feedback';
-  const SCRIPT_ID = 'wme-road-name-helper-np';
+												  
+  const downloadUrl = 'https://raw.githubusercontent.com/kid4rm90s/WME-Road-Name-Helper-NP/Beta/WME-Road-Name-Helper-NP-Beta.user.js';
+  const forumURL = 'https://github.com/kid4rm90s/WME-Road-Name-Helper-NP/issues';
+  const SCRIPT_ID = 'wme-road-name-helper-np-beta';
   const SCAN_DEBOUNCE_DELAY = 200; // 200ms delay after map movement stops
   const PROGRESS_UPDATE_THROTTLE = 10; // Update progress every N segments
   const RESCAN_DELAY_AFTER_FIX = 300; // Delay before rescanning after fix
   const MAX_SEGMENTS_TO_DISPLAY = 100; // Limit displayed segments for performance
-  const LAYER_NAME = 'WME Road Name Helper NP'; // Layer name for highlighting
+  const LAYER_NAME = 'WME Road Name Helper NP Beta'; // Layer name for highlighting
 
   let sdk;
   let currentMapExtent = null;
@@ -551,7 +552,7 @@ Version 2026.03.01.01:
       observer.observe(editPanel, { childList: true, subtree: true });
     } else {
       console.warn('WMESSA: Edit panel not found for observer.');
-    }
+    }																														
   }
 
   // Also observe for alt street card (for alt names)
@@ -2039,7 +2040,7 @@ Version 2026.03.01.01:
   }
 
   function wmessa_bootstrap() {
-    const wmeSdk = getWmeSdk({ scriptId: 'wme-road-name-helper-np', scriptName: 'WME Road Name Helper NP' });
+    const wmeSdk = getWmeSdk({ scriptId: 'wme-road-name-helper-np-beta', scriptName: 'WME Road Name Helper NP Beta' });
     sdk = wmeSdk;
     sdk.Events.once({ eventName: 'wme-ready' }).then(() => {
       initLayer();
@@ -2060,7 +2061,15 @@ Version 2026.03.01.01:
   function scriptupdatemonitor() {
     if (WazeToastr?.Ready) {
       // Create and start the ScriptUpdateMonitor
-      const updateMonitor = new WazeToastr.Alerts.ScriptUpdateMonitor(scriptName, scriptVersion, downloadUrl, GM_xmlhttpRequest);
+      // For GitHub raw URLs, we need to specify metaUrl explicitly (same as downloadUrl for GitHub)
+      const updateMonitor = new WazeToastr.Alerts.ScriptUpdateMonitor(
+        scriptName,
+        scriptVersion,
+        downloadUrl,
+        GM_xmlhttpRequest,
+        downloadUrl, // metaUrl - for GitHub, use the same URL as it contains the @version tag
+        /@version\s+(.+)/i, // metaRegExp - extracts version from @version tag
+      );
       updateMonitor.start(2, true); // Check every 2 hours, check immediately
 
       // Show the update dialog for the current version
@@ -2069,6 +2078,7 @@ Version 2026.03.01.01:
       setTimeout(scriptupdatemonitor, 250);
     }
   }
+
   /*
 Changelog:
 Version 2026.02.24.02:
