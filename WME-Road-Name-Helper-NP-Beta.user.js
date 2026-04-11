@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name            WME Road Name Helper NP
+// @name            WME Road Name Helper NP Beta
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2026.04.11.01
+// @version         2026.03.01.02
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
@@ -10,29 +10,30 @@
 // @grant           GM_xmlhttpRequest
 // @grant           GM_addStyle
 // @connect         translate.googleapis.com
+// @connect         raw.githubusercontent.com
 // @namespace       https://greasyfork.org/users/1087400
 // @require         https://greasyfork.org/scripts/560385/code/WazeToastr.js
-// @downloadURL     https://update.greasyfork.org/scripts/538171/WME%20Road%20Name%20Helper%20NP.user.js
-// @updateURL       https://update.greasyfork.org/scripts/538171/WME%20Road%20Name%20Helper%20NP.meta.js
-// @connect         greasyfork.org
+// @downloadURL     https://raw.githubusercontent.com/kid4rm90s/WME-Road-Name-Helper-NP/Beta/WME-Road-Name-Helper-NP-Beta.user.js
+// @updateURL       https://raw.githubusercontent.com/kid4rm90s/WME-Road-Name-Helper-NP/Beta/WME-Road-Name-Helper-NP-Beta.user.js
 
 // ==/UserScript==
 
 (function () {
   ('use strict');
   const updateMessage = `
-Version 2026.04.11.01:
+Version 2026.03.01.02:
 <strong>New Features & Fixes:</strong><br>
-- Now it will detect NH-[A-Z0-9] patterns and ensure capital letters.<br>
-- Now it will detect MDR-[A-Z0-9] patterns and ensure capital letters.<br>
--Temporary disablement of "Road" to "Rd" abbreviation due to common usage of "Road" in Nepal and potential confusion with "Rd" abbreviation.<br>
+- The "नेपा." button now uses the WME SDK to add the translated Nepali name as an alternative name for the selected segment (no more DOM manipulation).<br>
+- The previous DOM-based alt name update logic is commented out for reference.<br>
+- Translation logic now ensures that if the original text contains " - " (space-hyphen-space), the translated Nepali output will also have spaces before and after the hyphen, matching the English style.<br>
 - Various bug fixes and improvements.<br>
 `;
   const scriptVersion = GM_info.script.version.toString();
   const scriptName = GM_info.script.name;
-  const downloadUrl = 'https://greasyfork.org/scripts/538171-wme-road-name-helper-np/code/wme-road-name-helper-np.user.js';
-  const forumURL = 'https://greasyfork.org/en/scripts/538171-wme-road-name-helper-np/feedback';
-  const SCRIPT_ID = 'wme-road-name-helper-np';
+												  
+  const downloadUrl = 'https://raw.githubusercontent.com/kid4rm90s/WME-Road-Name-Helper-NP/Beta/WME-Road-Name-Helper-NP-Beta.user.js';
+  const forumURL = 'https://github.com/kid4rm90s/WME-Road-Name-Helper-NP/issues';
+  const SCRIPT_ID = 'wme-road-name-helper-np-beta';
   const SCAN_DEBOUNCE_DELAY = 200; // 200ms delay after map movement stops
   const PROGRESS_UPDATE_THROTTLE = 10; // Update progress every N segments
   const RESCAN_DELAY_AFTER_FIX = 300; // Delay before rescanning after fix
@@ -146,7 +147,7 @@ Version 2026.04.11.01:
     Quays: 'Qys',
     Retreat: 'Rtt',
     Ridge: 'Rdge',
-    // Road: 'Rd',  // Commented out: Road should not be abbreviated to Rd
+    Road: 'Rd',
     Square: 'Sq',
     Steps: 'Stps',
     Street: 'St',
@@ -448,10 +449,6 @@ Version 2026.04.11.01:
     return str
       .split(/\s+/)
       .map(function (txt) {
-        // If word matches [CODE]-[value] pattern (e.g., NH-125A, MDR-ABC), preserve uppercase
-        if (/^[A-Z]{2,}-[A-Z0-9]+$/i.test(txt)) {
-          return txt.replace(/^([A-Z]+)-(.+)$/i, (match, p1, p2) => p1.toUpperCase() + '-' + p2.toUpperCase());
-        }
         // If word matches a preserve-case word (case-insensitive), use the preserved version
         const preserve = wmessa_preserveCaseWords.find((w) => w.toLowerCase() === txt.toLowerCase());
         if (preserve) return preserve;
@@ -555,7 +552,7 @@ Version 2026.04.11.01:
       observer.observe(editPanel, { childList: true, subtree: true });
     } else {
       console.warn('WMESSA: Edit panel not found for observer.');
-    }
+    }																														
   }
 
   // Also observe for alt street card (for alt names)
@@ -1442,26 +1439,6 @@ Version 2026.04.11.01:
     let changed = false;
     let reasons = [];
 
-    // Check for NH-[A-Z0-9] pattern (e.g., "NH-ABC", "NH-125A" should have capital letters)
-    const nhLetterPattern = /^(NH)-([a-z0-9]+)(?:\s|$)/i;
-    const nhLetterMatch = streetName.match(nhLetterPattern);
-    if (nhLetterMatch) {
-      // Extract the alphanumeric part and ensure letters are capitalized
-      const nhCode = nhLetterMatch[1].toUpperCase(); // NH
-      const alphaPart = nhLetterMatch[2].replace(/[a-z]/g, (c) => c.toUpperCase()); // ABC, 125A, etc.
-      const rest = streetName.substring(nhLetterMatch[0].length).trim();
-      const suggested = rest ? `${nhCode}-${alphaPart} ${rest}` : `${nhCode}-${alphaPart}`;
-      
-      if (streetName !== suggested) {
-        return {
-          needsFix: true,
-          suggested: suggested,
-          reason: `Highway format: Ensure capital letters in NH-[code]`,
-        };
-      }
-      return { needsFix: false };
-    }
-
     // Check for highway patterns first (e.g., "NH41 - रा४१" should become "NH41 - रारा०१")
     const hwyPattern = /^(NH\d{2})\s*-\s*(.+)$/i;
     const hwyMatch = streetName.match(hwyPattern);
@@ -2084,7 +2061,15 @@ Version 2026.04.11.01:
   function scriptupdatemonitor() {
     if (WazeToastr?.Ready) {
       // Create and start the ScriptUpdateMonitor
-      const updateMonitor = new WazeToastr.Alerts.ScriptUpdateMonitor(scriptName, scriptVersion, downloadUrl, GM_xmlhttpRequest);
+      // For GitHub raw URLs, we need to specify metaUrl explicitly (same as downloadUrl for GitHub)
+      const updateMonitor = new WazeToastr.Alerts.ScriptUpdateMonitor(
+        scriptName,
+        scriptVersion,
+        downloadUrl,
+        GM_xmlhttpRequest,
+        downloadUrl, // metaUrl - for GitHub, use the same URL as it contains the @version tag
+        /@version\s+(.+)/i, // metaRegExp - extracts version from @version tag
+      );
       updateMonitor.start(2, true); // Check every 2 hours, check immediately
 
       // Show the update dialog for the current version
@@ -2093,12 +2078,9 @@ Version 2026.04.11.01:
       setTimeout(scriptupdatemonitor, 250);
     }
   }
+
   /*
 Changelog:
-Version 2026.04.11.01:
-- Now it will detect NH-[A-Z0-9] patterns and ensure capital letters.<br>
-- Now it will detect MDR-[A-Z0-9] patterns and ensure capital letters.<br>
--Temporary disablement of "Road" to "Rd" abbreviation due to common usage of "Road" in Nepal and potential confusion with "Rd" abbreviation.<br>
 Version 2026.02.24.02:
 <strong>New Features & Fixes:</strong><br>
 - The "नेपा." button now uses the WME SDK to add the translated Nepali name as an alternative name for the selected segment (no more DOM manipulation).<br>
