@@ -447,6 +447,10 @@ Version 2026.05.29.01:
     return str
       .split(/\s+/)
       .map(function (txt) {
+        // If word matches [CODE]-[value] pattern (e.g., NH-125A, MDR-ABC), preserve uppercase
+        if (/^[A-Z]{2,}-[A-Z0-9]+$/i.test(txt)) {
+          return txt.replace(/^([A-Z]+)-(.+)$/i, (match, p1, p2) => p1.toUpperCase() + '-' + p2.toUpperCase());
+        }
         // If word matches a preserve-case word (case-insensitive), use the preserved version
         const preserve = wmessa_preserveCaseWords.find((w) => w.toLowerCase() === txt.toLowerCase());
         if (preserve) return preserve;
