@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP Beta
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2026.03.01.02
+// @version         2026.05.29.01
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
@@ -21,11 +21,10 @@
 (function () {
   ('use strict');
   const updateMessage = `
-Version 2026.03.01.02:
+Version 2026.05.29.01:
 <strong>New Features & Fixes:</strong><br>
-- The "नेपा." button now uses the WME SDK to add the translated Nepali name as an alternative name for the selected segment (no more DOM manipulation).<br>
-- The previous DOM-based alt name update logic is commented out for reference.<br>
-- Translation logic now ensures that if the original text contains " - " (space-hyphen-space), the translated Nepali output will also have spaces before and after the hyphen, matching the English style.<br>
+- Fix for East-West and North-South hyphenated words to be properly title-cased (e.g., "East-west" → "East-West").<br>
+-Temporary disablement of "Road" to "Rd" abbreviation due to common usage of "Road" in Nepal and potential confusion with "Rd" abbreviation.<br>
 - Various bug fixes and improvements.<br>
 `;
   const scriptVersion = GM_info.script.version.toString();
@@ -101,7 +100,7 @@ Version 2026.03.01.02:
     St: 'Street',
     Sbwy: 'Subway',
     Tce: 'Terrace',
-    Trk: 'Track',
+    //Trk: 'Track',
     Trl: 'Trail',
     Vsta: 'Vista',
   };
@@ -147,13 +146,13 @@ Version 2026.03.01.02:
     Quays: 'Qys',
     Retreat: 'Rtt',
     Ridge: 'Rdge',
-    Road: 'Rd',
+    // Road: 'Rd',  // Commented out: Road should not be abbreviated to Rd
     Square: 'Sq',
     Steps: 'Stps',
     Street: 'St',
     Subway: 'Sbwy',
     Terrace: 'Tce',
-    Track: 'Trk',
+    //Track: 'Trk',
     Trail: 'Trl',
     Vista: 'Vsta',
     रा१: 'रारा०१',
@@ -237,7 +236,7 @@ Version 2026.03.01.02:
     रा७९: 'रारा७९',
     रा८०: 'रारा८०',
     AH02: 'AH2',
-    Ringroad: 'Ring Rd',
+    //Ringroad: 'Ring Rd',
   };
 
   // Suffixes that should be preserved in title case (case-insensitive)
@@ -452,6 +451,18 @@ Version 2026.03.01.02:
         // If word matches a preserve-case word (case-insensitive), use the preserved version
         const preserve = wmessa_preserveCaseWords.find((w) => w.toLowerCase() === txt.toLowerCase());
         if (preserve) return preserve;
+        // Handle hyphenated words
+        if (txt.includes('-')) {
+          const parts = txt.split('-');
+          const firstPart = parts[0];
+          const rest = parts.slice(1).join('-');
+          // Road code: second part has digits (e.g., NH-125A, nh-125a) or first part is 2+ uppercase letters (e.g., NH-ABC)
+          if (/\d/.test(rest) || /^[A-Z]{2,}$/.test(firstPart)) {
+            return txt.replace(/^([A-Za-z]+)-(.+)$/i, (match, p1, p2) => p1.toUpperCase() + '-' + p2.toUpperCase());
+          }
+          // For hyphenated English words (e.g., East-west → East-West), title case each part
+          return parts.map((part) => part.charAt(0).toUpperCase() + part.substr(1).toLowerCase()).join('-');
+        }
         return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
       })
       .join(' ');
@@ -1439,6 +1450,26 @@ Version 2026.03.01.02:
     let changed = false;
     let reasons = [];
 
+    // Check for NH-[A-Z0-9] pattern (e.g., "NH-ABC", "NH-125A" should have capital letters)
+    const nhLetterPattern = /^(NH)-([a-z0-9]+)(?:\s|$)/i;
+    const nhLetterMatch = streetName.match(nhLetterPattern);
+    if (nhLetterMatch) {
+      // Extract the alphanumeric part and ensure letters are capitalized
+      const nhCode = nhLetterMatch[1].toUpperCase(); // NH
+      const alphaPart = nhLetterMatch[2].replace(/[a-z]/g, (c) => c.toUpperCase()); // ABC, 125A, etc.
+      const rest = streetName.substring(nhLetterMatch[0].length).trim();
+      const suggested = rest ? `${nhCode}-${alphaPart} ${rest}` : `${nhCode}-${alphaPart}`;
+      
+      if (streetName !== suggested) {
+        return {
+          needsFix: true,
+          suggested: suggested,
+          reason: `Highway format: Ensure capital letters in NH-[code]`,
+        };
+      }
+      return { needsFix: false };
+    }
+
     // Check for highway patterns first (e.g., "NH41 - रा४१" should become "NH41 - रारा०१")
     const hwyPattern = /^(NH\d{2})\s*-\s*(.+)$/i;
     const hwyMatch = streetName.match(hwyPattern);
@@ -1501,10 +1532,11 @@ Version 2026.03.01.02:
       }
 
       // Check if exact highway mapping exists
+      // Only apply if the highway part is NOT already an English name (i.e., contains no Latin letters)
       const hwyKey = `${hwyCode.toUpperCase()}-`;
       const suggestedHwy = wmessa_suggestedHwyAbbr[hwyKey];
 
-      if (suggestedHwy && streetName !== suggestedHwy) {
+      if (suggestedHwy && streetName !== suggestedHwy && !/[A-Za-z]/.test(hwyPart)) {
         return {
           needsFix: true,
           suggested: suggestedHwy,
@@ -2078,9 +2110,12 @@ Version 2026.03.01.02:
       setTimeout(scriptupdatemonitor, 250);
     }
   }
-
   /*
 Changelog:
+Version 2026.04.11.01:
+- Now it will detect NH-[A-Z0-9] patterns and ensure capital letters.<br>
+- Now it will detect MDR-[A-Z0-9] patterns and ensure capital letters.<br>
+-Temporary disablement of "Road" to "Rd" abbreviation due to common usage of "Road" in Nepal and potential confusion with "Rd" abbreviation.<br>
 Version 2026.02.24.02:
 <strong>New Features & Fixes:</strong><br>
 - The "नेपा." button now uses the WME SDK to add the translated Nepali name as an alternative name for the selected segment (no more DOM manipulation).<br>
