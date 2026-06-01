@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP Beta
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2026.05.29.01
+// @version         2026.06.01.01
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
@@ -21,10 +21,10 @@
 (function () {
   ('use strict');
   const updateMessage = `
-Version 2026.05.29.01:
+Version 2026.06.01.01:
 <strong>New Features & Fixes:</strong><br>
 - Fix for East-West and North-South hyphenated words to be properly title-cased (e.g., "East-west" → "East-West").<br>
--Temporary disablement of "Road" to "Rd" abbreviation due to common usage of "Road" in Nepal and potential confusion with "Rd" abbreviation.<br>
+- Temporary disablement of "Road" to "Rd" abbreviation due to common usage of "Road" in Nepal and potential confusion with "Rd" abbreviation.<br>
 - Various bug fixes and improvements.<br>
 `;
   const scriptVersion = GM_info.script.version.toString();
@@ -456,11 +456,11 @@ Version 2026.05.29.01:
           const parts = txt.split('-');
           const firstPart = parts[0];
           const rest = parts.slice(1).join('-');
-          // Road code: second part has digits (e.g., NH-125A, nh-125a) or first part is 2+ uppercase letters (e.g., NH-ABC)
-          if (/\d/.test(rest) || /^[A-Z]{2,}$/.test(firstPart)) {
+          // Road code: only when starts with 'NH', 'MDR', or 'SH' and second part contains digits (e.g., NH-125A, MDR-123, SH-45B)
+          if (/^(nh|mdr|sh)$/i.test(firstPart) && /\d/.test(rest)) {
             return txt.replace(/^([A-Za-z]+)-(.+)$/i, (match, p1, p2) => p1.toUpperCase() + '-' + p2.toUpperCase());
           }
-          // For hyphenated English words (e.g., East-west → East-West), title case each part
+          // For all other hyphenated words (e.g., East-west → East-West, Chandrapur-Gaur → Chandrapur-Gaur), title case each part
           return parts.map((part) => part.charAt(0).toUpperCase() + part.substr(1).toLowerCase()).join('-');
         }
         return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
