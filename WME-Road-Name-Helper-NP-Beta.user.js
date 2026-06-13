@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP Beta
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2026.06.01.01
+// @version         2026.06.13.03
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
@@ -11,12 +11,14 @@
 // @grant           GM_addStyle
 // @connect         translate.googleapis.com
 // @connect         raw.githubusercontent.com
+// @connect         docs.google.com
 // @namespace       https://greasyfork.org/users/1087400
 // @require         https://greasyfork.org/scripts/560385/code/WazeToastr.js
 // @downloadURL     https://raw.githubusercontent.com/kid4rm90s/WME-Road-Name-Helper-NP/Beta/WME-Road-Name-Helper-NP-Beta.user.js
 // @updateURL       https://raw.githubusercontent.com/kid4rm90s/WME-Road-Name-Helper-NP/Beta/WME-Road-Name-Helper-NP-Beta.user.js
 
 // ==/UserScript==
+/*Script is forked from WME Standard Suffix Abbreviations (https://greasyfork.org/en/scripts/493429-wme-standard-suffix-abbreviations) with the approval of the original author brandon28au */
 
 (function () {
   ('use strict');
@@ -33,13 +35,29 @@ Version 2026.06.01.01:
   const downloadUrl = 'https://raw.githubusercontent.com/kid4rm90s/WME-Road-Name-Helper-NP/Beta/WME-Road-Name-Helper-NP-Beta.user.js';
   const forumURL = 'https://github.com/kid4rm90s/WME-Road-Name-Helper-NP/issues';
   const SCRIPT_ID = 'wme-road-name-helper-np-beta';
+  const SPREADSHEET_ID = '1v5oktSBohAGIc_yAs2XBT2xK8oZ9FFR9tT5rT_hL_C8';
+  const SHEET_CACHE_KEY_PREFIX = 'wme-rnh-data-';
+  // const SHEET_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+  const SHEET_CACHE_TTL_MS = 0; // Fetch fresh on every page load (for testing)
   const SCAN_DEBOUNCE_DELAY = 200; // 200ms delay after map movement stops
   const PROGRESS_UPDATE_THROTTLE = 10; // Update progress every N segments
   const RESCAN_DELAY_AFTER_FIX = 300; // Delay before rescanning after fix
   const MAX_SEGMENTS_TO_DISPLAY = 100; // Limit displayed segments for performance
   const LAYER_NAME = `${scriptName}`; // Layer name for highlighting
 
+  // Nepali translation special rules (pre-translation, applied before Google Translate)
+  const NEPALI_TRANSLATION_RULES = [
+    { regex: /\bRing\s*(Rd|Road)\b/gi, replace: 'चक्रपथ' },      // Ring Rd/Ring Road → चक्रपथ
+    { regex: /\b(Rd|Road)\b/gi, replace: 'सडक' },                  // Rd/Road → सडक
+    { regex: /\b(Marg|Marga)\b/gi, replace: 'मार्ग' }               // Marg/Marga → मार्ग
+    // Add more rules here: { regex: /pattern/gi, replace: 'replacement' }
+  ];
+
   let sdk;
+  let activeCountryCode = 'NP';
+  // Button label synced from GoogleTranslate sheet during loadCountryData()
+  // Initialized to placeholder; will be populated from sheet Column D before UI is created
+  let translateBtnLabel = '...';
   let currentMapExtent = null;
   let scanTimeout;
   let scannedSegments = [];
@@ -56,400 +74,297 @@ Version 2026.06.01.01:
     spinner: null,
   };
 
-  // Suffix Abbreviation Data (Abbreviation: FullWord)
-  // This is for suffixes that have standard abbreviations
-  const wmessa_approvedAbbr = {
-    Ally: 'Alley',
-    App: 'Approach',
-    Arc: 'Arcade',
-    Av: 'Avenue',
-    Bwlk: 'Boardwalk',
-    Bvd: 'Boulevard',
-    Brk: 'Break',
-    Bypa: 'Bypass',
-    Ch: 'Chase',
-    Cct: 'Circuit',
-    Cl: 'Close',
-    Con: 'Concourse',
-    Ct: 'Court',
-    Cr: 'Crescent',
-    Crst: 'Crest',
-    Dr: 'Drive',
-    Ent: 'Entrance',
-    Esp: 'Esplanade',
-    Exp: 'Expressway',
-    Ftrl: 'Firetrail',
-    Fwy: 'Freeway',
-    Glde: 'Glade',
-    Gra: 'Grange',
-    Gr: 'Grove',
-    Hwy: 'Highway',
-    Mwy: 'Motorway',
-    Pde: 'Parade',
-    Pwy: 'Parkway',
-    Psge: 'Passage',
-    Pl: 'Place',
-    Plza: 'Plaza',
-    Prom: 'Promenade',
-    Qys: 'Quays',
-    Rtt: 'Retreat',
-    Rdge: 'Ridge',
-    Rd: 'Road',
-    Sq: 'Square',
-    Stps: 'Steps',
-    St: 'Street',
-    Sbwy: 'Subway',
-    Tce: 'Terrace',
-    //Trk: 'Track',
-    Trl: 'Trail',
-    Vsta: 'Vista',
-  };
+  // Suffix Abbreviation Data — loaded dynamically from Google Sheets
+  let wmernh_approvedAbbr = {};
 
-  // Suffix Suggestion Data (UserTyped/FullWord: CorrectAbbreviation)
-  // This is for suffixes that have specific suggestions
-  const wmessa_suggestedAbbr = {
-    Alley: 'Ally',
-    Approach: 'App',
-    Arcade: 'Arc',
-    Avenue: 'Av',
-    Boardwalk: 'Bwlk',
-    Boulevard: 'Bvd',
-    Blvd: 'Bvd',
-    Break: 'Brk',
-    //Bypass: 'Bypa',
-    Chase: 'Ch',
-    Circuit: 'Cct',
-    Close: 'Cl',
-    Concourse: 'Con',
-    Court: 'Ct',
-    Crescent: 'Cr',
-    Crest: 'Crst',
-    Drive: 'Dr',
-    Entrance: 'Ent',
-    Esplanade: 'Esp',
-    Expressway: 'Exp',
-    Firetrail: 'Ftrl',
-    Freeway: 'Fwy',
-    Glade: 'Glde',
-    Grange: 'Gra',
-    Grove: 'Gr',
-    Highway: 'Hwy',
-    Ln: 'Lane',
-    Marg: 'Marga',
-    Motorway: 'Mwy',
-    Parade: 'Pde',
-    Parkway: 'Pwy',
-    Passage: 'Psge',
-    Place: 'Pl',
-    Plaza: 'Plza',
-    Promenade: 'Prom',
-    Quays: 'Qys',
-    Retreat: 'Rtt',
-    Ridge: 'Rdge',
-    // Road: 'Rd',  // Commented out: Road should not be abbreviated to Rd
-    Square: 'Sq',
-    Steps: 'Stps',
-    Street: 'St',
-    Subway: 'Sbwy',
-    Terrace: 'Tce',
-    //Track: 'Trk',
-    Trail: 'Trl',
-    Vista: 'Vsta',
-    रा१: 'रारा०१',
-    रा२: 'रारा०२',
-    रा३: 'रारा०३',
-    रा४: 'रारा०४',
-    रा५: 'रारा०५',
-    रा६: 'रारा०६',
-    रा७: 'रारा०७',
-    रा८: 'रारा०८',
-    रा९: 'रारा०९',
-    रा१०: 'रारा१०',
-    रा११: 'रारा११',
-    रा१२: 'रारा१२',
-    रा१३: 'रारा१३',
-    रा१४: 'रारा१४',
-    रा१५: 'रारा१५',
-    रा१६: 'रारा१६',
-    रा१७: 'रारा१७',
-    रा१८: 'रारा१८',
-    रा१९: 'रारा१९',
-    रा२०: 'रारा२०',
-    रा२१: 'रारा२१',
-    रा२२: 'रारा२२',
-    रा२३: 'रारा२३',
-    रा२४: 'रारा२४',
-    रा२५: 'रारा२५',
-    रा२६: 'रारा२६',
-    रा२७: 'रारा२७',
-    रा२८: 'रारा२८',
-    रा२९: 'रारा२९',
-    रा३०: 'रारा३०',
-    रा३१: 'रारा३१',
-    रा३२: 'रारा३२',
-    रा३३: 'रारा३३',
-    रा३४: 'रारा३४',
-    रा३५: 'रारा३५',
-    रा३६: 'रारा३६',
-    रा३७: 'रारा३७',
-    रा३८: 'रारा३८',
-    रा३९: 'रारा३९',
-    रा४०: 'रारा४०',
-    रा४१: 'रारा४१',
-    रा४२: 'रारा४२',
-    रा४३: 'रारा४३',
-    रा४४: 'रारा४४',
-    रा४५: 'रारा४५',
-    रा४६: 'रारा४६',
-    रा४७: 'रारा४७',
-    रा४८: 'रारा४८',
-    रा४९: 'रारा४९',
-    रा५०: 'रारा५०',
-    रा५१: 'रारा५१',
-    रा५२: 'रारा५२',
-    रा५३: 'रारा५३',
-    रा५४: 'रारा५४',
-    रा५५: 'रारा५५',
-    रा५६: 'रारा५६',
-    रा५७: 'रारा५७',
-    रा५८: 'रारा५८',
-    रा५९: 'रारा५९',
-    रा६०: 'रारा६०',
-    रा६१: 'रारा६१',
-    रा६२: 'रारा६२',
-    रा६३: 'रारा६३',
-    रा६४: 'रारा६४',
-    रा६५: 'रारा६५',
-    रा६६: 'रारा६६',
-    रा६७: 'रारा६७',
-    रा६८: 'रारा६८',
-    रा६९: 'रारा६९',
-    रा७०: 'रारा७०',
-    रा७१: 'रारा७१',
-    रा७२: 'रारा७२',
-    रा७३: 'रारा७३',
-    रा७४: 'रारा७४',
-    रा७५: 'रारा७५',
-    रा७६: 'रारा७६',
-    रा७७: 'रारा७७',
-    रा७८: 'रारा७८',
-    रा७९: 'रारा७९',
-    रा८०: 'रारा८०',
-    AH02: 'AH2',
-    //Ringroad: 'Ring Rd',
-  };
+  // Suffix Suggestion Data — loaded dynamically from Google Sheets
+  let wmernh_suggestedAbbr = {};
 
-  // Suffixes that should be preserved in title case (case-insensitive)
-  // These words will not be converted to lowercase in title case
-  // This is useful for words that are proper nouns or have specific casing requirements.
-  const wmessa_preserveCaseWords = [
-    'NH01',
-    'NH02',
-    'NH03',
-    'NH04',
-    'NH05',
-    'NH06',
-    'NH07',
-    'NH08',
-    'NH09',
-    'NH10',
-    'NH11',
-    'NH12',
-    'NH13',
-    'NH14',
-    'NH15',
-    'NH16',
-    'NH17',
-    'NH18',
-    'NH19',
-    'NH20',
-    'NH21',
-    'NH22',
-    'NH23',
-    'NH24',
-    'NH25',
-    'NH26',
-    'NH27',
-    'NH28',
-    'NH29',
-    'NH30',
-    'NH31',
-    'NH32',
-    'NH33',
-    'NH34',
-    'NH35',
-    'NH36',
-    'NH37',
-    'NH38',
-    'NH39',
-    'NH40',
-    'NH41',
-    'NH42',
-    'NH43',
-    'NH44',
-    'NH45',
-    'NH46',
-    'NH47',
-    'NH48',
-    'NH49',
-    'NH50',
-    'NH51',
-    'NH52',
-    'NH53',
-    'NH54',
-    'NH55',
-    'NH56',
-    'NH57',
-    'NH58',
-    'NH59',
-    'NH60',
-    'NH61',
-    'NH62',
-    'NH63',
-    'NH64',
-    'NH65',
-    'NH66',
-    'NH67',
-    'NH68',
-    'NH69',
-    'NH70',
-    'NH71',
-    'NH72',
-    'NH73',
-    'NH74',
-    'NH75',
-    'NH76',
-    'NH77',
-    'NH78',
-    'NH79',
-    'NH80',
-    'AH1',
-    'AH2',
-    'AH3',
-    'AH4',
-    'AH5',
-    'AH6',
-    'AH7',
-    'AH8',
-    'AH9',
-    'AH10',
-    'AH42',
-    'KTM',
-  ];
+  // Preserve Case Words — loaded dynamically from Google Sheets
+  let wmernh_preserveCaseWords = [];
 
-  // Highway Suffix Suggestion Data (EXACT match only)
-  // This is for highway abbreviations that have specific suggestions
-  const wmessa_suggestedHwyAbbr = {
-    'NH01-': 'NH01 - रारा०१',
-    'NH02-': 'NH02 - रारा०२',
-    'NH03-': 'NH03 - रारा०३',
-    'NH04-': 'NH04 - रारा०४',
-    'NH05-': 'NH05 - रारा०५',
-    'NH06-': 'NH06 - रारा०६',
-    'NH07-': 'NH07 - रारा०७',
-    'NH08-': 'NH08 - रारा०८',
-    'NH09-': 'NH09 - रारा०९',
-    'NH10-': 'NH10 - रारा१०',
-    'NH11-': 'NH11 - रारा११',
-    'NH12-': 'NH12 - रारा१२',
-    'NH13-': 'NH13 - रारा१३',
-    'NH14-': 'NH14 - रारा१४',
-    'NH15-': 'NH15 - रारा१५',
-    'NH16-': 'NH16 - रारा१६',
-    'NH17-': 'NH17 - रारा१७',
-    'NH18-': 'NH18 - रारा१८',
-    'NH19-': 'NH19 - रारा१९',
-    'NH20-': 'NH20 - रारा२०',
-    'NH21-': 'NH21 - रारा२१',
-    'NH22-': 'NH22 - रारा२२',
-    'NH23-': 'NH23 - रारा२३',
-    'NH24-': 'NH24 - रारा२४',
-    'NH25-': 'NH25 - रारा२५',
-    'NH26-': 'NH26 - रारा२६',
-    'NH27-': 'NH27 - रारा२७',
-    'NH28-': 'NH28 - रारा२८',
-    'NH29-': 'NH29 - रारा२९',
-    'NH30-': 'NH30 - रारा३०',
-    'NH31-': 'NH31 - रारा३१',
-    'NH32-': 'NH32 - रारा३२',
-    'NH33-': 'NH33 - रारा३३',
-    'NH34-': 'NH34 - रारा३४',
-    'NH35-': 'NH35 - रारा३५',
-    'NH36-': 'NH36 - रारा३६',
-    'NH37-': 'NH37 - रारा३७',
-    'NH38-': 'NH38 - रारा३८',
-    'NH39-': 'NH39 - रारा३९',
-    'NH40-': 'NH40 - रारा४०',
-    'NH41-': 'NH41 - रारा४१',
-    'NH42-': 'NH42 - रारा४२',
-    'NH43-': 'NH43 - रारा४३',
-    'NH44-': 'NH44 - रारा४४',
-    'NH45-': 'NH45 - रारा४५',
-    'NH46-': 'NH46 - रारा४६',
-    'NH47-': 'NH47 - रारा४७',
-    'NH48-': 'NH48 - रारा४८',
-    'NH49-': 'NH49 - रारा४९',
-    'NH50-': 'NH50 - रारा५०',
-    'NH51-': 'NH51 - रारा५१',
-    'NH52-': 'NH52 - रारा५२',
-    'NH53-': 'NH53 - रारा५३',
-    'NH54-': 'NH54 - रारा५४',
-    'NH55-': 'NH55 - रारा५५',
-    'NH56-': 'NH56 - रारा५६',
-    'NH57-': 'NH57 - रारा५७',
-    'NH58-': 'NH58 - रारा५८',
-    'NH59-': 'NH59 - रारा५९',
-    'NH60-': 'NH60 - रारा६०',
-    'NH61-': 'NH61 - रारा६१',
-    'NH62-': 'NH62 - रारा६२',
-    'NH63-': 'NH63 - रारा६३',
-    'NH64-': 'NH64 - रारा६४',
-    'NH65-': 'NH65 - रारा६५',
-    'NH66-': 'NH66 - रारा६६',
-    'NH67-': 'NH67 - रारा६७',
-    'NH68-': 'NH68 - रारा६८',
-    'NH69-': 'NH69 - रारा६९',
-    'NH70-': 'NH70 - रारा७०',
-    'NH71-': 'NH71 - रारा७१',
-    'NH72-': 'NH72 - रारा७२',
-    'NH73-': 'NH73 - रारा७३',
-    'NH74-': 'NH74 - रारा७४',
-    'NH75-': 'NH75 - रारा७५',
-    'NH76-': 'NH76 - रारा७६',
-    'NH77-': 'NH77 - रारा७७',
-    'NH78-': 'NH78 - रारा७८',
-    'NH79-': 'NH79 - रारा७९',
-    'NH80-': 'NH80 - रारा८०',
-  };
+  // Highway Exact Match Data — loaded dynamically from Google Sheets
+  let wmernh_suggestedHwyAbbr = {};
 
-  // Suffixes with No Standard Abbreviation
-  const wmessa_knownNoAbbr = ['Lane', 'Loop', 'Mall', 'Mews', 'Path', 'Ramp', 'Rise', 'View', 'Walk', 'Way'];
+  // Suffixes with No Standard Abbreviation — loaded dynamically from Google Sheets
+  let wmernh_knownNoAbbr = [];
 
-  // --- NEW DATA FOR GENERAL WORDS (PRE-SUFFIX) ---
-  // General Word Suggestion Data (WordToAbbreviate: Abbreviation)
-  const wmessa_generalWordSuggestions = {
-    Mount: 'Mt',
-    Saint: 'St', // Note: "St" for Saint. Suffix logic handles "St" for Street.
-    Fort: 'Ft',
-    Marg: 'Marga', // Nepal: "Marg" should be expanded to full word "Marga"
-    // Add other common words like "North": "N", "South": "S", etc., if standard for pre-suffix words.
-  };
+  // General Word Suggestion Data — loaded dynamically from Google Sheets
+  let wmernh_generalWordSuggestions = {};
 
-  // General Word Approved Abbreviation Data (Abbreviation: FullWord) - for validation
-  const wmessa_generalWordApprovedAbbr = {
-    Mt: 'Mount',
-    St: 'Saint',
-    Ft: 'Fort',
-    Marga: 'Marg', // Nepal: "Marga" is the approved full word form
-    // e.g. "N": "North", "S": "South"
-  };
+  // General Word Approved Abbreviation Data — loaded dynamically from Google Sheets
+  let wmernh_generalWordApprovedAbbr = {};
 
-  function wmessa_titleCase(str) {
+  // Translation Settings — loaded from GoogleTranslate sheet
+  let translationActive = false; // Only show/do translation if Active=TRUE in sheet
+  let translationTargetLanguage = 'ne'; // Nepali by default
+  let translationSourceLanguage = 'auto'; // Auto-detect by default
+  let translationSpecialRules = []; // Array of { regex, replace } rules (pre-translation)
+  let translationPostRules = []; // Array of { regex, replace } rules (post-translation corrections)
+  let translationButtonLabel = 'ने.'; // Default button label
+
+  // ========== GOOGLE SHEETS DATA LOADING ==========
+
+  /**
+   * Parse the gviz JSON response from Google Sheets.
+   * Strips the /*O_o* / wrapper and returns the rows array.
+   * Each row is an array of cell values (string | boolean | null).
+   */
+  function parseGvizJson(responseText) {
+    // Strip the JSONP wrapper: /*O_o*/google.visualization.Query.setResponse({...});
+    const match = responseText.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\);?\s*$/);
+    if (!match) throw new Error('[WMERNH] Could not parse gviz response');
+    const parsed = JSON.parse(match[1]);
+    const rows = parsed.table.rows || [];
+    return rows.map((row) => row.c.map((cell) => (cell ? cell.v : null)));
+  }
+
+  /**
+   * Build all 7 data objects from a flat rows array.
+   * Row format: [DataType, Key, Value, Disabled, Notes]
+   * Rows with Disabled=true or null Key are skipped.
+   */
+  function buildDataObjects(rows) {
+    const approvedAbbr = {};
+    const suggestedAbbr = {};
+    const preserveCaseWords = [];
+    const suggestedHwyAbbr = {};
+    const knownNoAbbr = [];
+    const generalWordSuggestions = {};
+    const generalWordApprovedAbbr = {};
+
+    for (const row of rows) {
+      const [dataType, key, value, disabled] = row;
+      if (!dataType || !key || disabled === true) continue;
+
+      switch (dataType) {
+        case 'approvedAbbr':
+          if (value) approvedAbbr[key] = value;
+          break;
+        case 'suggestedAbbr':
+          if (value) suggestedAbbr[key] = value;
+          break;
+        case 'preserveCase':
+          preserveCaseWords.push(key);
+          break;
+        case 'hwy_exact':
+          if (value) suggestedHwyAbbr[key] = value;
+          break;
+        case 'no_abbr':
+          knownNoAbbr.push(key);
+          break;
+        case 'general_suggestion':
+          if (value) generalWordSuggestions[key] = value;
+          break;
+        case 'general_approved':
+          if (value) generalWordApprovedAbbr[key] = value;
+          break;
+      }
+    }
+
+    wmernh_approvedAbbr = approvedAbbr;
+    wmernh_suggestedAbbr = suggestedAbbr;
+    wmernh_preserveCaseWords = preserveCaseWords;
+    wmernh_suggestedHwyAbbr = suggestedHwyAbbr;
+    wmernh_knownNoAbbr = knownNoAbbr;
+    wmernh_generalWordSuggestions = generalWordSuggestions;
+    wmernh_generalWordApprovedAbbr = generalWordApprovedAbbr;
+
+    console.log(`[WMERNH] Data loaded: approvedAbbr=${Object.keys(approvedAbbr).length}, suggestedAbbr=${Object.keys(suggestedAbbr).length}, preserveCase=${preserveCaseWords.length}, hwyExact=${Object.keys(suggestedHwyAbbr).length}, noAbbr=${knownNoAbbr.length}, generalSugg=${Object.keys(generalWordSuggestions).length}, generalAppr=${Object.keys(generalWordApprovedAbbr).length}`);
+  }
+
+  /**
+   * Load translation settings from the GoogleTranslate sheet.
+   * Sheet columns: Country Code | Country Name | Active | Translate Button Label | Source Language | Target Language | ISO-639-1 Code
+   * Example:
+   *   NP | Nepal | TRUE | ने.' | English | Nepali | ne
+   *   IN | India | TRUE | हि.' | English | Hindi | hi
+   *   AU | Australia | FALSE | | | |
+   */
+  async function loadTranslationSettings(countryCode) {
+    try {
+      const rows = await fetchSheetRows('GoogleTranslate');
+      // Find the row matching the current country code
+      const countryRow = rows.find((r) => r[0] && r[0].toUpperCase() === countryCode.toUpperCase());
+      if (countryRow) {
+        const countryName = countryRow[1] || countryCode; // Column B: Country Name
+        const isActive = countryRow[2]; // Column C: Active (TRUE/FALSE - boolean from gviz JSON)
+        // Only enable translation if Active column is TRUE
+        translationActive = isActive === true || isActive === 'TRUE';
+        translationButtonLabel = countryRow[3] || countryCode; // Column D: Translate Button Label
+        translationSourceLanguage = countryRow[4] ? 'auto' : 'auto'; // Column E: Source Language (always 'auto' for auto-detect)
+        translationTargetLanguage = countryRow[6] || 'ne'; // Column G: ISO-639-1 Code (e.g., 'ne', 'hi')
+        
+        // Set up pre-translation special rules for Nepali
+        translationSpecialRules = [];
+        if (countryCode.toUpperCase() === 'NP') {
+          translationSpecialRules.push(...NEPALI_TRANSLATION_RULES);
+        }
+        
+        console.log(`[WMERNH] Translation settings loaded for "${countryCode}" (${countryName}): active=${translationActive}, targetLang="${translationTargetLanguage}", sourceLang="${translationSourceLanguage}", buttonLabel="${translationButtonLabel}", specialRules=${translationSpecialRules.length}`);
+      } else {
+        console.warn(`[WMERNH] Country "${countryCode}" not found in GoogleTranslate sheet, translation disabled`);
+        translationActive = false;
+        translationTargetLanguage = 'ne';
+        translationSourceLanguage = 'auto';
+        translationButtonLabel = countryCode;
+        translationSpecialRules = [];
+        translationPostRules = [];
+      }
+    } catch (e) {
+      console.error(`[WMERNH] Failed to fetch GoogleTranslate sheet:`, e);
+      translationActive = false;
+      translationTargetLanguage = 'ne';
+      translationSourceLanguage = 'auto';
+      translationButtonLabel = countryCode;
+      // Initialize Nepali special rules as fallback
+      translationSpecialRules = [];
+      if (countryCode.toUpperCase() === 'NP') {
+        translationSpecialRules.push(...NEPALI_TRANSLATION_RULES);
+      }
+      translationPostRules = [];
+    }
+  }
+
+  /**
+   * Fetch a sheet from Google Sheets as gviz JSON using GM_xmlhttpRequest.
+   * Returns a Promise that resolves with the parsed rows array.
+   */
+  function fetchSheetRows(sheetName) {
+    return new Promise((resolve, reject) => {
+      const url = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        onload(response) {
+          if (response.status < 200 || response.status >= 300) {
+            reject(new Error(`[WMERNH] HTTP ${response.status} fetching sheet "${sheetName}"`));
+            return;
+          }
+          try {
+            resolve(parseGvizJson(response.responseText));
+          } catch (e) {
+            reject(e);
+          }
+        },
+        onerror(err) {
+          reject(new Error(`[WMERNH] Network error fetching sheet "${sheetName}": ${JSON.stringify(err)}`));
+        },
+      });
+    });
+  }
+
+  /**
+   * Load country data from Google Sheets.
+   * Uses SDK's getTopCountry() to detect the current country, then fetches the matching sheet.
+   * Checks sessionStorage first (TTL-based cache); fetches from Sheets if missing/expired.
+   * Steps:
+   *   1. Detect active country via wmeSDK.DataModel.Countries.getTopCountry()
+   *   2. Fetch Countries sheet to map country code → sheet name + button label
+   *   3. Fetch country's data sheet → buildDataObjects
+   */
+  async function loadCountryData() {
+    // Step 0: Detect country from WME SDK
+    let detectedCountryCode = 'NP'; // fallback
+    let detectedCountryName = 'Nepal'; // fallback
+    let detectedCountryAbbr = 'नेपा'; // fallback
+    try {
+      const topCountry = sdk.DataModel.Countries.getTopCountry();
+      if (topCountry && topCountry.abbr) {
+        detectedCountryCode = topCountry.abbr;  // Use abbr (IN, NP) not id (101, 123)
+        detectedCountryName = topCountry.name;  // e.g., "India"
+        detectedCountryAbbr = topCountry.abbr;  // e.g., "IN"
+        console.log(`[WMERNH] Detected country from SDK: "${detectedCountryCode}" (${detectedCountryName})`);
+        WazeToastr.Alerts.info(scriptName, `Detected country: ${detectedCountryName} (${detectedCountryAbbr})`);
+      }
+    } catch (e) {
+      console.warn('[WMERNH] Could not detect country from SDK, defaulting to "NP":', e);
+    }
+    
+    // Step 1: Fetch Countries sheet to map country code → sheet name
+    let countryCode = detectedCountryCode;
+    let sheetName = detectedCountryCode;
+    try {
+      const countryRows = await fetchSheetRows('Countries');
+      console.log(`[WMERNH] Countries sheet has ${countryRows.length} entries:`, countryRows.map(r => r[0]).join(', '));
+      // Columns: Country Code | Sheet Name | (other columns)
+      // Match the detected country code (case-insensitive)
+      const matchedRow = countryRows.find((r) => r[0] && r[0].toUpperCase() === detectedCountryCode.toUpperCase());
+      if (matchedRow) {
+        countryCode = matchedRow[0] || detectedCountryCode;
+        sheetName = matchedRow[1] || countryCode;
+        console.log(`[WMERNH] Found country mapping: ${countryCode} → sheet "${sheetName}"`);
+      } else {
+        console.warn(`[WMERNH] Country "${detectedCountryCode}" not found in Countries sheet, using defaults`);
+        countryCode = detectedCountryCode;
+        sheetName = detectedCountryCode;
+        btnLabel = `${detectedCountryName} (${detectedCountryAbbr})`;
+      }
+    } catch (e) {
+      console.error(`[WMERNH] Failed to fetch Countries sheet, using defaults:`, e);
+      countryCode = detectedCountryCode;
+      sheetName = detectedCountryCode;
+    }
+
+    activeCountryCode = countryCode;
+    
+    // Load translation settings from GoogleTranslate sheet (includes button label)
+    await loadTranslationSettings(countryCode);
+    // Sync button label: translationButtonLabel (from sheet) → translateBtnLabel (used in UI)
+    translateBtnLabel = translationButtonLabel; // Column D: Translate Button Label (e.g., 'ने.', 'हि.')
+    
+    // Use country-specific cache key (was: shared key that didn't change per country)
+    const cacheKey = SHEET_CACHE_KEY_PREFIX + countryCode;
+    
+    try {
+      // Check cache for THIS country
+      const cached = sessionStorage.getItem(cacheKey);
+      if (cached) {
+        const { ts, rows } = JSON.parse(cached);
+        if (Date.now() - ts < SHEET_CACHE_TTL_MS) {
+          buildDataObjects(rows);
+          console.log(`[WMERNH] Using cached data for country "${activeCountryCode}"`);
+          return;
+        }
+      }
+    } catch (e) {
+      // Ignore corrupt cache
+      console.warn('[WMERNH] Cache read error, re-fetching:', e);
+    }
+
+    console.log(`[WMERNH] Loading fresh data for "${activeCountryCode}" from sheet "${sheetName}"...`);
+
+    // Step 2: Fetch country data sheet
+    try {
+      const rows = await fetchSheetRows(sheetName);
+      buildDataObjects(rows);
+      console.log(`[WMERNH] Data loaded for country "${activeCountryCode}": approvedAbbr=${Object.keys(wmernh_approvedAbbr).length}, suggestedAbbr=${Object.keys(wmernh_suggestedAbbr).length}`);
+
+      // Save to country-specific cache
+      try {
+        sessionStorage.setItem(
+          cacheKey,
+          JSON.stringify({ ts: Date.now(), rows }),
+        );
+      } catch (e) {
+        console.warn('[WMERNH] Cache write error:', e);
+      }
+    } catch (e) {
+      console.error(`[WMERNH] Failed to fetch country sheet "${sheetName}". Script will run with empty data:`, e);
+      if (typeof WazeToastr !== 'undefined' && WazeToastr?.Alerts) {
+        WazeToastr.Alerts.error(scriptName, 'Could not load abbreviation data from Google Sheets. Check your internet connection.');
+      }
+    }
+  }
+
+  // ========== END GOOGLE SHEETS DATA LOADING ==========
+
+  function wmernh_titleCase(str) {
     return str
       .split(/\s+/)
       .map(function (txt) {
         // If word matches a preserve-case word (case-insensitive), use the preserved version
-        const preserve = wmessa_preserveCaseWords.find((w) => w.toLowerCase() === txt.toLowerCase());
+        const preserve = wmernh_preserveCaseWords.find((w) => w.toLowerCase() === txt.toLowerCase());
         if (preserve) return preserve;
         // Handle hyphenated words
         if (txt.includes('-')) {
@@ -468,7 +383,7 @@ Version 2026.06.01.01:
       .join(' ');
   }
 
-  let wmessa_valueObserver;
+  let wmernh_valueObserver;
 
   // Add styles for sidebar panel
   function addSidebarStyles() {
@@ -508,7 +423,7 @@ Version 2026.06.01.01:
     GM_addStyle(styles);
   }
 
-  function wmessa_init() {
+  function wmernh_init() {
     // Initialize sidebar panel
     initSidebarPanel();
 
@@ -517,8 +432,8 @@ Version 2026.06.01.01:
         if (mutation.type === 'childList') {
           mutation.removedNodes.forEach((node) => {
             if (node.classList && node.classList.contains('address-edit-card')) {
-              if (wmessa_valueObserver) {
-                wmessa_valueObserver.disconnect();
+              if (wmernh_valueObserver) {
+                wmernh_valueObserver.disconnect();
               }
             }
           });
@@ -531,12 +446,12 @@ Version 2026.06.01.01:
                 if (streetNameInput && streetNameInput.shadowRoot) {
                   const wzTextInput = streetNameInput.shadowRoot.querySelector('wz-text-input');
                   if (wzTextInput) {
-                    wmessa_monitor(wzTextInput);
+                    wmernh_monitor(wzTextInput);
                   } else {
-                    console.warn('WMESSA: wz-text-input not found in street-name shadowRoot.');
+                    console.warn('WMERNH: wz-text-input not found in street-name shadowRoot.');
                   }
                 } else {
-                  console.warn('WMESSA: street-name input or its shadowRoot not found.');
+                  console.warn('WMERNH: street-name input or its shadowRoot not found.');
                 }
                 // Alt street name(s)
                 const altStreetInputs = node.querySelectorAll('wz-autocomplete.alt-street-name');
@@ -544,12 +459,12 @@ Version 2026.06.01.01:
                   if (altInput && altInput.shadowRoot) {
                     const altWzTextInput = altInput.shadowRoot.querySelector('wz-text-input');
                     if (altWzTextInput) {
-                      wmessa_monitor(altWzTextInput);
+                      wmernh_monitor(altWzTextInput);
                     } else {
-                      console.warn('WMESSA: wz-text-input not found in alt-street-name shadowRoot.');
+                      console.warn('WMERNH: wz-text-input not found in alt-street-name shadowRoot.');
                     }
                   } else {
-                    console.warn('WMESSA: alt-street-name input or its shadowRoot not found.');
+                    console.warn('WMERNH: alt-street-name input or its shadowRoot not found.');
                   }
                 });
               }, 250);
@@ -562,7 +477,7 @@ Version 2026.06.01.01:
     if (editPanel) {
       observer.observe(editPanel, { childList: true, subtree: true });
     } else {
-      console.warn('WMESSA: Edit panel not found for observer.');
+      console.warn('WMERNH: Edit panel not found for observer.');
     }																														
   }
 
@@ -577,12 +492,12 @@ Version 2026.06.01.01:
               if (altStreetInput && altStreetInput.shadowRoot) {
                 const altWzTextInput = altStreetInput.shadowRoot.querySelector('wz-text-input');
                 if (altWzTextInput) {
-                  wmessa_monitor(altWzTextInput);
+                  wmernh_monitor(altWzTextInput);
                 } else {
-                  console.warn('WMESSA: wz-text-input not found in alt-street-name shadowRoot (alt card).');
+                  console.warn('WMERNH: wz-text-input not found in alt-street-name shadowRoot (alt card).');
                 }
               } else {
-                console.warn('WMESSA: alt-street-name input or its shadowRoot not found (alt card).');
+                console.warn('WMERNH: alt-street-name input or its shadowRoot not found (alt card).');
               }
             }, 250);
           }
@@ -593,47 +508,58 @@ Version 2026.06.01.01:
   // Observe the whole document for alt street cards
   altStreetPanelObserver.observe(document.body, { childList: true, subtree: true });
 
-  function wmessa_monitor(element) {
+  function wmernh_monitor(element) {
     let abbrContainer = document.createElement('div');
-    abbrContainer.id = 'WMESSA_container';
+    abbrContainer.id = 'WMERNH_container';
 
+    // Build button HTML conditionally: only show translate button if translation is active for this country
+    let translateBtnHtml = '';
+    if (translationActive) {
+      translateBtnHtml = `<button id="WMERNH_translate_btn" title="This will add translated name as Alt name." style="margin-left:8px;display:flex;align-items:center;gap:2px;padding:2px 6px;font-size:13px;border:1px solid #bbb;border-radius:4px;cursor:pointer;">
+        <i class="fa fa-language" aria-hidden="true" style="font-size:14px;"></i>
+        ${translateBtnLabel}
+      </button>`;
+    }
     abbrContainer.innerHTML =
-      '<div class="WMESSA_icon" title="WME Standard Suffix Abbreviations"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M4.5 2A2.5 2.5 0 0 0 2 4.5v2.879a2.5 2.5 0 0 0 .732 1.767l4.5 4.5a2.5 2.5 0 0 0 3.536 0l2.878-2.878a2.5 2.5 0 0 0 0-3.536l-4.5-4.5A2.5 2.5 0 0 0 7.38 2H4.5ZM5 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd" /></svg></div>' +
-      '<div id="WMESSA_output">Loading...</div>' +
-      '<button id="WMESSA_translate_btn" title="This will add translated name as Alt name." style="margin-left:8px;display:flex;align-items:center;gap:2px;padding:2px 6px;font-size:13px;border:1px solid #bbb;border-radius:4px;cursor:pointer;">' +
-      '<i class="fa fa-language" aria-hidden="true" style="font-size:14px;"></i>' +
-    'नेपा. </button>';
+      '<div class="WMERNH_icon" title="WME Standard Suffix Abbreviations"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M4.5 2A2.5 2.5 0 0 0 2 4.5v2.879a2.5 2.5 0 0 0 .732 1.767l4.5 4.5a2.5 2.5 0 0 0 3.536 0l2.878-2.878a2.5 2.5 0 0 0 0-3.536l-4.5-4.5A2.5 2.5 0 0 0 7.38 2H4.5ZM5 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd" /></svg></div>' +
+      '<div id="WMERNH_output">Loading...</div>' +
+      translateBtnHtml;
     const statusTextContainer = element.shadowRoot.querySelector('.status-text-container');
     if (!statusTextContainer) {
-      console.warn('WMESSA: .status-text-container not found. UI will not be displayed.');
+      console.warn('WMERNH: .status-text-container not found. UI will not be displayed.');
       return;
     }
     statusTextContainer.insertBefore(abbrContainer, statusTextContainer.firstChild);
 
 
-    let abbrOutput = abbrContainer.querySelector('#WMESSA_output');
-    let translateBtn = abbrContainer.querySelector('#WMESSA_translate_btn');
+    let abbrOutput = abbrContainer.querySelector('#WMERNH_output');
+    let translateBtn = abbrContainer.querySelector('#WMERNH_translate_btn');
 
 
     // --- Translation logic using Google Translate API, preserving tokens/placeholders ---
     async function translateToNepali(text) {
-              console.log('[WMESSA] Translation requested:', { input: text });
-            // Special-case replacements (add more as needed)
-            const specialCases = [
-              { regex: /\bRing\s*(Rd|Road)\b/gi, replace: 'चक्रपथ' },
-              { regex: /\b(Rd|Road)\b/gi, replace: 'सडक' },
-              // Add more rules here: { regex: /pattern/gi, replace: 'replacement' },
-            ];
+              console.log('[WMERNH] Translation requested:', { input: text, active: translationActive });
+            // Skip translation if not active for this country
+            if (!translationActive) {
+              console.log('[WMERNH] Translation disabled for this country, returning original text');
+              return text;
+            }
+            // Use translation rules loaded from GoogleTranslate sheet
             let specialText = text;
             let specialMatched = false;
-            for (const rule of specialCases) {
-              if (rule.regex.test(specialText)) {
-                specialText = specialText.replace(rule.regex, rule.replace);
-                specialMatched = true;
+            for (const rule of translationSpecialRules) {
+              try {
+                const regex = new RegExp(rule.regex, 'gi');
+                if (regex.test(specialText)) {
+                  specialText = specialText.replace(regex, rule.replace);
+                  specialMatched = true;
+                }
+              } catch (e) {
+                console.warn('[WMERNH] Invalid regex in translation rule:', rule, e);
               }
             }
             if (specialMatched) {
-              console.log('[WMESSA] Special-case translation:', { input: text, output: specialText });
+              console.log('[WMERNH] Special-case translation:', { input: text, output: specialText });
               // Recursively translate the special-case output if it changed
               if (specialText !== text) {
                 return await translateToNepali(specialText);
@@ -641,7 +567,7 @@ Version 2026.06.01.01:
               return specialText;
             }
       if (!text.trim()) {
-        console.log('[WMESSA] Empty input, skipping translation.');
+        console.log('[WMERNH] Empty input, skipping translation.');
         return text;
       }
       // Simple token preservation: skip translation for {...} and [signal] blocks
@@ -653,30 +579,36 @@ Version 2026.06.01.01:
       });
 
       // Expand common abbreviations before translation (e.g., Rd -> Road)
-      // Use the wmessa_approvedAbbr mapping
+      // Use the wmernh_approvedAbbr mapping
       replaced = replaced.replace(/\b([A-Za-z]{2,5})\b/g, (match) => {
         // Only expand if in the abbreviation list and not all uppercase (to avoid e.g. NH for highways)
-        if (wmessa_approvedAbbr[match] && match !== match.toUpperCase()) {
-          return wmessa_approvedAbbr[match];
+        if (wmernh_approvedAbbr[match] && match !== match.toUpperCase()) {
+          return wmernh_approvedAbbr[match];
         }
         return match;
       });
       const hasLatin = /[A-Za-z]/.test(replaced);
       const hasDevanagari = /[\u0900-\u097F]/.test(replaced);
-      let sourceLang = 'auto';
-      if (hasLatin && !hasDevanagari) {
-        sourceLang = 'en';
-      } else if (hasDevanagari && !hasLatin) {
-        sourceLang = 'ne';
+      
+      // Use source language from GoogleTranslate sheet; if 'auto' then detect
+      let sourceLang = translationSourceLanguage;
+      if (sourceLang === 'auto') {
+        if (hasLatin && !hasDevanagari) {
+          sourceLang = 'en';
+        } else if (hasDevanagari && !hasLatin) {
+          sourceLang = translationTargetLanguage;
+        }
       }
+      
       // Google Translate API (unofficial, public endpoint)
-      console.log('[WMESSA] Translation API call:', { replaced, sourceLang });
+      console.log('[WMERNH] Translation API call:', { replaced, sourceLang, targetLang: translationTargetLanguage });
       try {
-        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=ne&dt=t&q=${encodeURIComponent(replaced)}`;
-        console.debug('WMESSA translate request', {
+        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=${translationTargetLanguage}&dt=t&q=${encodeURIComponent(replaced)}`;
+        console.debug('WMERNH translate request', {
           originalText: text,
           translatedInput: replaced,
           sourceLang,
+          targetLang: translationTargetLanguage,
           url,
         });
         return await new Promise((resolve) => {
@@ -686,7 +618,7 @@ Version 2026.06.01.01:
             responseType: 'json',
             onload: function(response) {
               if (response.status < 200 || response.status >= 300) {
-                console.error('WMESSA translate HTTP error', {
+                console.error('WMERNH translate HTTP error', {
                   status: response.status,
                   statusText: response.statusText,
                   url,
@@ -696,16 +628,13 @@ Version 2026.06.01.01:
                 return;
               }
               let res = response.response;
-              console.log('[WMESSA] Translation API response:', { url, response: res });
+              console.log('[WMERNH] Translation API response:', { url, response: res });
               if (typeof res === 'string') {
                 try { res = JSON.parse(res); } catch {}
               }
               let translated = Array.isArray(res) && Array.isArray(res[0]) ? res[0].map(seg => Array.isArray(seg) ? seg[0] : '').join('') : (res?.[0]?.[0]?.[0] ?? replaced);
               // Restore tokens
               translated = translated.replace(/__TOKEN_(\d+)__/g, (_, i) => tokens[+i] || '');
-              // Post-translation fix: Replace 'रोड' with 'सडक'
-              translated = translated.replace(/\u0930\u094B\u0921/g, 'सडक'); // Unicode for 'रोड'
-              translated = translated.replace(/रोड/g, 'सडक'); // Fallback for direct string
 
               // Ensure spaces before and after hyphens, matching English style
               // Only if the original input had ' - ' (space-hyphen-space), enforce it in the output
@@ -714,18 +643,36 @@ Version 2026.06.01.01:
                 translated = translated.replace(/\s*-\s*/g, ' - ');
               }
 
-              console.log('[WMESSA] Translation result:', { input: text, replaced, output: translated });
+              console.log('[WMERNH] Translation result:', { input: text, replaced, output: translated });
+              
+              // Apply post-translation correction rules (e.g., Nepali: मार्गा → मार्ग)
+              for (const rule of translationPostRules) {
+                try {
+                  if (rule.regex && rule.replace) {
+                    // For regex string patterns, create RegExp with global flag
+                    const regex = rule.regex instanceof RegExp ? rule.regex : new RegExp(rule.regex, 'g');
+                    if (regex.test(translated)) {
+                      const before = translated;
+                      translated = translated.replace(regex, rule.replace);
+                      console.log(`[WMERNH] Post-translation correction applied:`, { rule: rule.regex, before, after: translated });
+                    }
+                  }
+                } catch (e) {
+                  console.warn('[WMERNH] Invalid post-translation rule:', rule, e);
+                }
+              }
+              
               resolve(translated);
             },
             onerror: function(error) {
-              console.error('[WMESSA] Translation API error:', { error, url, input: text, replaced, sourceLang });
-              console.error('WMESSA translate request failed', { error, url, originalText: text, translatedInput: replaced, sourceLang });
+              console.error('[WMERNH] Translation API error:', { error, url, input: text, replaced, sourceLang });
+              console.error('WMERNH translate request failed', { error, url, originalText: text, translatedInput: replaced, sourceLang });
               resolve(text);
             }
           });
         });
       } catch (e) {
-        console.error('[WMESSA] Translation exception:', { error: e, input: text, replaced, sourceLang });
+        console.error('[WMERNH] Translation exception:', { error: e, input: text, replaced, sourceLang });
         return text;
       }
     }
@@ -733,14 +680,14 @@ Version 2026.06.01.01:
 
     // --- Inline Nepali suggestion element (async) ---
     let nepaliSuggestion = document.createElement('span');
-    nepaliSuggestion.id = 'WMESSA_nepali_suggestion';
+    nepaliSuggestion.id = 'WMERNH_nepali_suggestion';
     nepaliSuggestion.style.cssText = 'margin-left:10px;color:#1565c0;font-size:0.95em;font-style:italic;';
     abbrContainer.appendChild(nepaliSuggestion);
 
     let lastSuggestValue = '';
     async function updateNepaliSuggestion() {
       const currentValue = element.value.trim();
-      if (!currentValue) {
+      if (!currentValue || !translationActive) {
         nepaliSuggestion.textContent = '';
         lastSuggestValue = '';
         return;
@@ -748,10 +695,10 @@ Version 2026.06.01.01:
       // Avoid duplicate requests for same value
       if (currentValue === lastSuggestValue) return;
       lastSuggestValue = currentValue;
-      nepaliSuggestion.textContent = 'नेपा.: Translating...';
+      nepaliSuggestion.textContent = 'Translating...';
       const translated = await translateToNepali(currentValue);
       if (translated && translated !== currentValue) {
-        nepaliSuggestion.textContent = `नेपा.: ${translated}`;
+        nepaliSuggestion.textContent = `${translated}`;
       } else {
         nepaliSuggestion.textContent = '';
       }
@@ -774,7 +721,7 @@ Version 2026.06.01.01:
         translateBtn.disabled = true;
         translateBtn.textContent = 'Translating...';
         const translated = await translateToNepali(currentValue);
-        translateBtn.textContent = 'नेपा.';
+        translateBtn.textContent = 'ने.';
         translateBtn.disabled = false;
 
         // --- SDK-based alt name update ---
@@ -894,40 +841,40 @@ Version 2026.06.01.01:
 																											   
 				
         'px); display: flex; flex-direction: column-reverse;}',
-      '#WMESSA_container {display: flex; align-items: center; flex-grow: 1; margin-top: var(--wz-label-margin, 8px); padding: 0 2px; border-radius: 5px; background: #ffffff; color: #ffffff; gap: 5px; cursor: default; transition: background 0.25s linear, color 0.25s linear; font-size: 0.9em;}',
-      '#WMESSA_output {color: #000000; white-space: pre-wrap; flex-grow: 1;}',
-      '.WMESSA_icon {display: inline-flex; padding: 2px; height: 12px; background: rgba(0,0,0,0.5); border-radius: 3px; flex-shrink: 0; margin-right: 5px;}',
-      '.WMESSA_icon svg {height: 100%;}',
-      '#WMESSA_container.info {background: #e0f2fe; color: #e0f2fe;}',
-      '#WMESSA_container.check {background: #fef3c7; color: #fef3c7; cursor: pointer;}',
-      '#WMESSA_container.check:hover {background: #fde68a; color: #fde68a;}',
-      '#WMESSA_container.valid {background: #d1fae5; color: #d1fae5;}',
+      '#WMERNH_container {display: flex; align-items: center; flex-grow: 1; margin-top: var(--wz-label-margin, 8px); padding: 0 2px; border-radius: 5px; background: #ffffff; color: #ffffff; gap: 5px; cursor: default; transition: background 0.25s linear, color 0.25s linear; font-size: 0.9em;}',
+      '#WMERNH_output {color: #000000; white-space: pre-wrap; flex-grow: 1;}',
+      '.WMERNH_icon {display: inline-flex; padding: 2px; height: 12px; background: rgba(0,0,0,0.5); border-radius: 3px; flex-shrink: 0; margin-right: 5px;}',
+      '.WMERNH_icon svg {height: 100%;}',
+      '#WMERNH_container.info {background: #e0f2fe; color: #e0f2fe;}',
+      '#WMERNH_container.check {background: #fef3c7; color: #fef3c7; cursor: pointer;}',
+      '#WMERNH_container.check:hover {background: #fde68a; color: #fde68a;}',
+      '#WMERNH_container.valid {background: #d1fae5; color: #d1fae5;}',
     ].join(' ');
     const styleElement = document.createElement('style');
     styleElement.type = 'text/css';
     styleElement.textContent = css;
     element.shadowRoot.appendChild(styleElement);
 
-    if (wmessa_valueObserver) {
-      wmessa_valueObserver.disconnect();
+    if (wmernh_valueObserver) {
+      wmernh_valueObserver.disconnect();
     }
-    wmessa_valueObserver = new MutationObserver((mutationsList, observer) => {
+    wmernh_valueObserver = new MutationObserver((mutationsList, observer) => {
       for (let mutation of mutationsList) {
         if (mutation.type === 'attributes' && mutation.attributeName === 'value') {
-          wmessa_update(element, abbrContainer, abbrOutput);
+          wmernh_update(element, abbrContainer, abbrOutput);
         }
       }
     });
-    wmessa_valueObserver.observe(element, { attributes: true });
+    wmernh_valueObserver.observe(element, { attributes: true });
 
-    wmessa_update(element, abbrContainer, abbrOutput);
+    wmernh_update(element, abbrContainer, abbrOutput);
 
     // Add Tab key support for applying suggestion
     element.addEventListener('keydown', function (e) {
       if (e.key === 'Tab') {
-        const abbrContainer = element.shadowRoot.querySelector('#WMESSA_container');
+        const abbrContainer = element.shadowRoot.querySelector('#WMERNH_container');
         if (abbrContainer && abbrContainer.classList.contains('check')) {
-          const abbrOutput = abbrContainer.querySelector('#WMESSA_output');
+          const abbrOutput = abbrContainer.querySelector('#WMERNH_output');
           // Simulate click to apply suggestion
           abbrContainer.click();
           e.preventDefault();
@@ -936,17 +883,17 @@ Version 2026.06.01.01:
     });
   }
 
-  function wmessa_analyzeSuffix(suffix) {
+  function wmernh_analyzeSuffix(suffix) {
     const suffixLower = suffix.toLowerCase();
     let result = { status: 'info', message: 'No match for suffix.', proposed: suffix, original: suffix };
 
-    const isKnownNoAbbrExact = (sLower) => wmessa_knownNoAbbr.some((kna) => kna.toLowerCase() === sLower);
-    const getKnownNoAbbrCased = (sLower) => wmessa_knownNoAbbr.find((kna) => kna.toLowerCase() === sLower);
+    const isKnownNoAbbrExact = (sLower) => wmernh_knownNoAbbr.some((kna) => kna.toLowerCase() === sLower);
+    const getKnownNoAbbrCased = (sLower) => wmernh_knownNoAbbr.find((kna) => kna.toLowerCase() === sLower);
 
     // 0. Exact match for highway abbreviations (special case)
-    const hwyKey = Object.keys(wmessa_suggestedHwyAbbr).find((key) => key.toLowerCase() === suffixLower);
+    const hwyKey = Object.keys(wmernh_suggestedHwyAbbr).find((key) => key.toLowerCase() === suffixLower);
     if (hwyKey) {
-      const suggestedHwy = wmessa_suggestedHwyAbbr[hwyKey];
+      const suggestedHwy = wmernh_suggestedHwyAbbr[hwyKey];
       if (suggestedHwy.toLowerCase() !== suffixLower) {
         return { status: 'check', message: `Use ${suggestedHwy} for ${hwyKey}`, proposed: suggestedHwy, original: suffix };
       } else {
@@ -955,12 +902,12 @@ Version 2026.06.01.01:
     }
 
     // 1. Exact match: Typed IS an approved abbreviation (e.g., "Rd")
-    if (wmessa_approvedAbbr.hasOwnProperty(suffix)) {
-      return { status: 'valid', message: `${suffix} for ${wmessa_approvedAbbr[suffix]}`, proposed: suffix, original: suffix };
+    if (wmernh_approvedAbbr.hasOwnProperty(suffix)) {
+      return { status: 'valid', message: `${suffix} for ${wmernh_approvedAbbr[suffix]}`, proposed: suffix, original: suffix };
     }
-    const approvedKeyCi = Object.keys(wmessa_approvedAbbr).find((k) => k.toLowerCase() === suffixLower);
+    const approvedKeyCi = Object.keys(wmernh_approvedAbbr).find((k) => k.toLowerCase() === suffixLower);
     if (approvedKeyCi) {
-      return { status: 'valid', message: `${approvedKeyCi} for ${wmessa_approvedAbbr[approvedKeyCi]}`, proposed: approvedKeyCi, original: suffix };
+      return { status: 'valid', message: `${approvedKeyCi} for ${wmernh_approvedAbbr[approvedKeyCi]}`, proposed: approvedKeyCi, original: suffix };
     }
 
     // 2. Exact match: Typed IS a known non-abbreviated suffix (e.g., "Lane")
@@ -973,12 +920,12 @@ Version 2026.06.01.01:
     const suffixRegex = new RegExp(`^${escapedSuffix}`, 'i');
 
     // 3. Suggestion: Typed is (prefix of) a full word that should be abbreviated (e.g., "Street" or "Stre" -> "St")
-    let suggestFromFullKey = Object.keys(wmessa_suggestedAbbr).find((key) => key.toLowerCase() === suffixLower);
+    let suggestFromFullKey = Object.keys(wmernh_suggestedAbbr).find((key) => key.toLowerCase() === suffixLower);
     if (!suggestFromFullKey) {
-      suggestFromFullKey = Object.keys(wmessa_suggestedAbbr).find((key) => suffixRegex.test(key));
+      suggestFromFullKey = Object.keys(wmernh_suggestedAbbr).find((key) => suffixRegex.test(key));
     }
     if (suggestFromFullKey) {
-      const suggestedAbbr = wmessa_suggestedAbbr[suggestFromFullKey];
+      const suggestedAbbr = wmernh_suggestedAbbr[suggestFromFullKey];
       if (suggestedAbbr.toLowerCase() !== suffixLower) {
         return { status: 'check', message: `Use ${suggestedAbbr} for ${suggestFromFullKey}`, proposed: suggestedAbbr, original: suffix };
       } else {
@@ -987,29 +934,29 @@ Version 2026.06.01.01:
           const casedNoAbbr = getKnownNoAbbrCased(suggestedAbbr.toLowerCase()) || suggestedAbbr;
           return { status: 'valid', message: casedNoAbbr, proposed: casedNoAbbr, original: suffix };
         }
-        const finalApprovedKeyCi = Object.keys(wmessa_approvedAbbr).find((k) => k.toLowerCase() === suggestedAbbr.toLowerCase());
+        const finalApprovedKeyCi = Object.keys(wmernh_approvedAbbr).find((k) => k.toLowerCase() === suggestedAbbr.toLowerCase());
         if (finalApprovedKeyCi) {
-          return { status: 'valid', message: `${finalApprovedKeyCi} for ${wmessa_approvedAbbr[finalApprovedKeyCi]}`, proposed: finalApprovedKeyCi, original: suffix };
+          return { status: 'valid', message: `${finalApprovedKeyCi} for ${wmernh_approvedAbbr[finalApprovedKeyCi]}`, proposed: finalApprovedKeyCi, original: suffix };
         }
       }
     }
 
     // 4. Suggestion: Typed is (prefix of) a known non-abbreviated word (e.g., "Lan" -> "Lane")
-    const knownNoAbbrCompletion = wmessa_knownNoAbbr.find((key) => suffixRegex.test(key));
+    const knownNoAbbrCompletion = wmernh_knownNoAbbr.find((key) => suffixRegex.test(key));
     if (knownNoAbbrCompletion && knownNoAbbrCompletion.toLowerCase() !== suffixLower) {
       return { status: 'check', message: `Use ${knownNoAbbrCompletion}`, proposed: knownNoAbbrCompletion, original: suffix };
     }
 
     // 5. Suggestion: Typed is (prefix of) an approved abbreviation (e.g., "Al" -> "Ally")
-    const approvedAbbrCompletionKey = Object.keys(wmessa_approvedAbbr).find((key) => suffixRegex.test(key));
+    const approvedAbbrCompletionKey = Object.keys(wmernh_approvedAbbr).find((key) => suffixRegex.test(key));
     if (approvedAbbrCompletionKey && approvedAbbrCompletionKey.toLowerCase() !== suffixLower) {
-      return { status: 'check', message: `Use ${approvedAbbrCompletionKey} for ${wmessa_approvedAbbr[approvedAbbrCompletionKey]}`, proposed: approvedAbbrCompletionKey, original: suffix };
+      return { status: 'check', message: `Use ${approvedAbbrCompletionKey} for ${wmernh_approvedAbbr[approvedAbbrCompletionKey]}`, proposed: approvedAbbrCompletionKey, original: suffix };
     }
 
     return result;
   }
 
-  function wmessa_update(element, abbrContainer, abbrOutput) {
+  function wmernh_update(element, abbrContainer, abbrOutput) {
     abbrContainer.classList.remove('valid', 'check', 'info');
     abbrContainer.onclick = null;
     abbrOutput.innerText = 'Awaiting input...';
@@ -1038,7 +985,7 @@ Version 2026.06.01.01:
         const word = currentWords[i];
         const wordLower = word.toLowerCase();
 
-        const generalApprovedKeyCi = Object.keys(wmessa_generalWordApprovedAbbr).find((k) => k.toLowerCase() === wordLower);
+        const generalApprovedKeyCi = Object.keys(wmernh_generalWordApprovedAbbr).find((k) => k.toLowerCase() === wordLower);
         if (generalApprovedKeyCi) {
           // Word is already an approved general abbreviation
           if (word !== generalApprovedKeyCi) {
@@ -1049,9 +996,9 @@ Version 2026.06.01.01:
           continue;
         }
 
-        const generalSuggestionKeyCi = Object.keys(wmessa_generalWordSuggestions).find((k) => k.toLowerCase() === wordLower);
+        const generalSuggestionKeyCi = Object.keys(wmernh_generalWordSuggestions).find((k) => k.toLowerCase() === wordLower);
         if (generalSuggestionKeyCi) {
-          const suggestedGeneralAbbr = wmessa_generalWordSuggestions[generalSuggestionKeyCi];
+          const suggestedGeneralAbbr = wmernh_generalWordSuggestions[generalSuggestionKeyCi];
           if (suggestedGeneralAbbr.toLowerCase() !== wordLower) {
             proposedWords[i] = suggestedGeneralAbbr;
             preSuffixChangesMade = true;
@@ -1069,12 +1016,12 @@ Version 2026.06.01.01:
     };
     if (currentWords.length > 0) {
       const potentialSuffix = currentWords[currentWords.length - 1];
-      suffixAnalysis = wmessa_analyzeSuffix(potentialSuffix);
+      suffixAnalysis = wmernh_analyzeSuffix(potentialSuffix);
       proposedWords[currentWords.length - 1] = suffixAnalysis.proposed;
     }
 
     // --- Combine Results and Determine UI ---
-    const finalProposedString = wmessa_titleCase(proposedWords.join(' '));
+    const finalProposedString = wmernh_titleCase(proposedWords.join(' '));
     const suffixChanged = currentWords.length > 0 && suffixAnalysis.proposed.toLowerCase() !== suffixAnalysis.original.toLowerCase();
     const capitalizationChanged = currentValue !== finalProposedString;
     let anyChangeProposed = preSuffixChangesMade || suffixChanged || capitalizationChanged;
@@ -1104,9 +1051,9 @@ Version 2026.06.01.01:
           const word = currentWords[i];
           const wordLower = word.toLowerCase();
           // Check if it's a full word that *could* be abbreviated, but isn't
-          const canBeAbbreviatedKey = Object.keys(wmessa_generalWordSuggestions).find((k) => k.toLowerCase() === wordLower);
+          const canBeAbbreviatedKey = Object.keys(wmernh_generalWordSuggestions).find((k) => k.toLowerCase() === wordLower);
           // And it's not already an abbreviation of itself or something else
-          const isAbbreviation = Object.keys(wmessa_generalWordApprovedAbbr).find((k) => k.toLowerCase() === wordLower);
+          const isAbbreviation = Object.keys(wmernh_generalWordApprovedAbbr).find((k) => k.toLowerCase() === wordLower);
           if (canBeAbbreviatedKey && !isAbbreviation) {
             allWordsAreStandard = false;
             break;
@@ -1164,6 +1111,16 @@ Version 2026.06.01.01:
       version.textContent = `Version ${scriptVersion}`;
       version.style.marginBottom = '10px';
       container.appendChild(version);
+
+      // Detected Country
+      const topCountry = sdk.DataModel.Countries.getTopCountry();
+      if (topCountry && topCountry.abbr) {
+        detectedCountryName = topCountry.name;  // e.g., "India"
+      }
+      const countryDisplay = document.createElement('wz-label');
+      countryDisplay.textContent = `Detected Country: ${detectedCountryName || 'Unknown'}`;
+      countryDisplay.style.marginBottom = '10px';
+      container.appendChild(countryDisplay);
 
       // Preview checkbox
       const previewContainer = document.createElement('div');
@@ -1479,7 +1436,7 @@ Version 2026.06.01.01:
 
       // Preserve highway names ending with approved abbreviations or "Hwy" or "Ring Rd"
       // This includes: "NH41 - Prithvi Hwy", "NH39 - KTM Ring Rd", "NH77 - Bharatpur Ring Rd"
-      const approvedSuffixPattern = new RegExp(`\\s+(${Object.keys(wmessa_approvedAbbr).join('|')}|Hwy|Ring\\s+Rd)$`, 'i');
+      const approvedSuffixPattern = new RegExp(`\\s+(${Object.keys(wmernh_approvedAbbr).join('|')}|Hwy|Ring\\s+Rd)$`, 'i');
       if (hwyPart.match(approvedSuffixPattern)) {
         return { needsFix: false };
       }
@@ -1502,9 +1459,9 @@ Version 2026.06.01.01:
         }
 
         // Check general suggestions
-        const generalSuggestionKeyCi = Object.keys(wmessa_generalWordSuggestions).find((k) => k.toLowerCase() === wordLower);
+        const generalSuggestionKeyCi = Object.keys(wmernh_generalWordSuggestions).find((k) => k.toLowerCase() === wordLower);
         if (generalSuggestionKeyCi) {
-          const suggestedGeneralAbbr = wmessa_generalWordSuggestions[generalSuggestionKeyCi];
+          const suggestedGeneralAbbr = wmernh_generalWordSuggestions[generalSuggestionKeyCi];
           if (suggestedGeneralAbbr.toLowerCase() !== wordLower) {
             hwyProposedWords[i] = suggestedGeneralAbbr;
             hwyChanged = true;
@@ -1512,7 +1469,7 @@ Version 2026.06.01.01:
         }
 
         // Check suffix suggestions
-        const devanagariSuggestion = wmessa_suggestedAbbr[word];
+        const devanagariSuggestion = wmernh_suggestedAbbr[word];
         if (devanagariSuggestion && devanagariSuggestion !== word) {
           hwyProposedWords[i] = devanagariSuggestion;
           hwyChanged = true;
@@ -1520,7 +1477,7 @@ Version 2026.06.01.01:
       }
 
       if (hwyChanged) {
-        const newHwyPart = wmessa_titleCase(hwyProposedWords.join(' '));
+        const newHwyPart = wmernh_titleCase(hwyProposedWords.join(' '));
         const newSuggestion = `${hwyCode.toUpperCase()} - ${newHwyPart}`;
         if (streetName !== newSuggestion) {
           return {
@@ -1534,7 +1491,7 @@ Version 2026.06.01.01:
       // Check if exact highway mapping exists
       // Only apply if the highway part is NOT already an English name (i.e., contains no Latin letters)
       const hwyKey = `${hwyCode.toUpperCase()}-`;
-      const suggestedHwy = wmessa_suggestedHwyAbbr[hwyKey];
+      const suggestedHwy = wmernh_suggestedHwyAbbr[hwyKey];
 
       if (suggestedHwy && streetName !== suggestedHwy && !/[A-Za-z]/.test(hwyPart)) {
         return {
@@ -1548,7 +1505,7 @@ Version 2026.06.01.01:
     // Check for standalone Devanagari abbreviations in any position
     for (let i = 0; i < currentWords.length; i++) {
       const word = currentWords[i];
-      const devanagariSuggestion = wmessa_suggestedAbbr[word];
+      const devanagariSuggestion = wmernh_suggestedAbbr[word];
       if (devanagariSuggestion && devanagariSuggestion !== word) {
         proposedWords[i] = devanagariSuggestion;
         changed = true;
@@ -1565,9 +1522,9 @@ Version 2026.06.01.01:
         // Skip if already processed as Devanagari
         if (proposedWords[i] !== currentWords[i]) continue;
 
-        const generalSuggestionKeyCi = Object.keys(wmessa_generalWordSuggestions).find((k) => k.toLowerCase() === wordLower);
+        const generalSuggestionKeyCi = Object.keys(wmernh_generalWordSuggestions).find((k) => k.toLowerCase() === wordLower);
         if (generalSuggestionKeyCi) {
-          const suggestedGeneralAbbr = wmessa_generalWordSuggestions[generalSuggestionKeyCi];
+          const suggestedGeneralAbbr = wmernh_generalWordSuggestions[generalSuggestionKeyCi];
           if (suggestedGeneralAbbr.toLowerCase() !== wordLower) {
             proposedWords[i] = suggestedGeneralAbbr;
             changed = true;
@@ -1580,7 +1537,7 @@ Version 2026.06.01.01:
     // Process suffix (last word) - only if not already processed
     if (currentWords.length > 0 && proposedWords[proposedWords.length - 1] === currentWords[currentWords.length - 1]) {
       const potentialSuffix = currentWords[currentWords.length - 1];
-      const suffixAnalysis = wmessa_analyzeSuffix(potentialSuffix);
+      const suffixAnalysis = wmernh_analyzeSuffix(potentialSuffix);
 
       if (suffixAnalysis.status === 'check' && suffixAnalysis.proposed.toLowerCase() !== potentialSuffix.toLowerCase()) {
         proposedWords[currentWords.length - 1] = suffixAnalysis.proposed;
@@ -1589,7 +1546,7 @@ Version 2026.06.01.01:
       }
     }
 
-    const finalProposed = wmessa_titleCase(proposedWords.join(' '));
+    const finalProposed = wmernh_titleCase(proposedWords.join(' '));
     const capitalizationChanged = streetName !== finalProposed;
 
     if (changed || capitalizationChanged) {
@@ -2071,13 +2028,36 @@ Version 2026.06.01.01:
     }
   }
 
-  function wmessa_bootstrap() {
+  /**
+   * Set up listener to detect country changes and reload data.
+   * Watches for 'wme-map-move-end' events; if the top country changes, reloads spreadsheet data.
+   */
+  function setupCountryChangeListener() {
+    sdk.Events.on({
+      eventName: 'wme-map-move-end',
+      eventHandler: async () => {
+        try {
+          const topCountry = sdk.DataModel.Countries.getTopCountry();
+          if (topCountry && topCountry.abbr && topCountry.abbr !== activeCountryCode) {
+            console.log(`[WMERNH] Country changed from "${activeCountryCode}" to "${topCountry.abbr}", reloading data...`);
+            await loadCountryData();
+          }
+        } catch (e) {
+          console.warn('[WMERNH] Error checking for country change:', e);
+        }
+      }
+    });
+  }
+
+  async function wmernh_bootstrap() {
     const wmeSdk = getWmeSdk({ scriptId: `${SCRIPT_ID}`, scriptName: `${scriptName}` });
     sdk = wmeSdk;
-    sdk.Events.once({ eventName: 'wme-ready' }).then(() => {
+    sdk.Events.once({ eventName: 'wme-ready' }).then(async () => {
       initLayer();
       scriptupdatemonitor();
-      wmessa_init();
+      await loadCountryData();
+      wmernh_init();
+      setupCountryChangeListener();
     });
   }
 
@@ -2086,7 +2066,7 @@ Version 2026.06.01.01:
       setTimeout(waitForWME, 500);
       return;
     }
-    unsafeWindow.SDK_INITIALIZED.then(wmessa_bootstrap);
+    unsafeWindow.SDK_INITIALIZED.then(wmernh_bootstrap);
   }
   waitForWME();
 
