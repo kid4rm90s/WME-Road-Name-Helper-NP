@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP Beta
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2026.06.13.03
+// @version         2026.06.22.04
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
@@ -23,10 +23,11 @@
 (function () {
   ('use strict');
   const updateMessage = `
-Version 2026.06.01.01:
+Version 2026.06.22.01:
 <strong>New Features & Fixes:</strong><br>
-- Fix for East-West and North-South hyphenated words to be properly title-cased (e.g., "East-west" → "East-West").<br>
-- Temporary disablement of "Road" to "Rd" abbreviation due to common usage of "Road" in Nepal and potential confusion with "Rd" abbreviation.<br>
+- Added support for filtering Primary name and alternate names separately in the sidebar panel.<br>
+- Added management of suffixes with google spreadsheet for easy updates.<br>
+- Added support for Portugal Country Sheet <br>
 - Various bug fixes and improvements.<br>
 `;
   const scriptVersion = GM_info.script.version.toString();
@@ -54,7 +55,12 @@ Version 2026.06.01.01:
   ];
 
   let sdk;
-  let activeCountryCode = 'NP';
+  let activeCountryCode = 'NP';       // Default to Nepal if detection fails
+  let detectedCountryName = 'Nepal';  // Default to Nepal if detection fails    
+  let detectedCountryCode = 'NP';     // Default to NP if detection fails
+  let detectedCountryAbbr = 'NP';     // Default to NP if detection fails
+  let lastAlertedCountryCode = '';
+
   // Button label synced from GoogleTranslate sheet during loadCountryData()
   // Initialized to placeholder; will be populated from sheet Column D before UI is created
   let translateBtnLabel = '...';
@@ -64,6 +70,7 @@ Version 2026.06.01.01:
   let isScanning = false;
   let eventSubscriptions = [];
   let previewEnabled = localStorage.getItem('wme-rnh-preview-enabled') === 'true';
+  let previewAltNamesEnabled = localStorage.getItem('wme-rnh-preview-alt-names-enabled') === 'true';
 
   // Cached UI elements
   const cachedElements = {
@@ -72,6 +79,7 @@ Version 2026.06.01.01:
     resultsContainer: null,
     progressBar: null,
     spinner: null,
+    countryDisplay: null, 
   };
 
   // Suffix Abbreviation Data — loaded dynamically from Google Sheets
@@ -254,6 +262,42 @@ Version 2026.06.01.01:
     });
   }
 
+
+  function updateCountryDisplay() {
+    if (cachedElements.countryDisplay) {
+        cachedElements.countryDisplay.textContent = 
+            `Detected Country: ${detectedCountryName || 'Unknown'} (${detectedCountryCode || '??'})`;
+    }
+  }
+  
+  function showCountryToast() {
+      // Only show if country was actually detected and WazeToastr is ready
+      if (WazeToastr?.Ready && detectedCountryCode && detectedCountryCode !== lastAlertedCountryCode) {
+          WazeToastr.Alerts.info(scriptName, `Detected country: ${detectedCountryName} (${detectedCountryCode})`);
+          lastAlertedCountryCode = detectedCountryCode;
+      } else if (!WazeToastr?.Ready) {
+          setTimeout(showCountryToast, 250);  // Retry until WazeToastr is ready
+      }
+  }
+  function detectCountryFromSDK() {
+    // Step 0: Detect country from WME SDK
+    try {
+      const topCountry = sdk.DataModel.Countries.getTopCountry();
+      if (topCountry && topCountry.abbr) {
+        activeCountryCode = topCountry.abbr;
+        detectedCountryCode = topCountry.abbr;  // Use abbr (IN, NP) not id (101, 123)
+        detectedCountryName = topCountry.name;  // e.g., "India"
+        detectedCountryAbbr = topCountry.abbr;  // e.g., "IN"
+        console.log(`[WMERNH] Detected country from SDK: "${detectedCountryCode}" (${detectedCountryName})`);
+        updateCountryDisplay();
+        return true;   // signal that detection succeeded
+      }
+      return false;    // signal that SDK isn't ready yet
+    } catch (e) {
+      console.warn('[WMERNH] Could not detect country from SDK, defaulting to "NP":', e);
+      return false;    // signal failure
+    }
+  }
   /**
    * Load country data from Google Sheets.
    * Uses SDK's getTopCountry() to detect the current country, then fetches the matching sheet.
@@ -264,26 +308,36 @@ Version 2026.06.01.01:
    *   3. Fetch country's data sheet → buildDataObjects
    */
   async function loadCountryData() {
-    // Step 0: Detect country from WME SDK
-    let detectedCountryCode = 'NP'; // fallback
-    let detectedCountryName = 'Nepal'; // fallback
-    let detectedCountryAbbr = 'नेपा'; // fallback
-    try {
-      const topCountry = sdk.DataModel.Countries.getTopCountry();
-      if (topCountry && topCountry.abbr) {
-        detectedCountryCode = topCountry.abbr;  // Use abbr (IN, NP) not id (101, 123)
-        detectedCountryName = topCountry.name;  // e.g., "India"
-        detectedCountryAbbr = topCountry.abbr;  // e.g., "IN"
-        console.log(`[WMERNH] Detected country from SDK: "${detectedCountryCode}" (${detectedCountryName})`);
-        WazeToastr.Alerts.info(scriptName, `Detected country: ${detectedCountryName} (${detectedCountryAbbr})`);
-      }
-    } catch (e) {
-      console.warn('[WMERNH] Could not detect country from SDK, defaulting to "NP":', e);
-    }
-    
+    // // Step 0: Detect country from WME SDK
+    // let detectedCountryCode = 'NP'; // fallback
+    // let detectedCountryName = 'Nepal'; // fallback
+    // let detectedCountryAbbr = 'नेपा'; // fallback
+    // try {
+    //   const topCountry = sdk.DataModel.Countries.getTopCountry();
+    //   if (topCountry && topCountry.abbr) {
+    //     detectedCountryCode = topCountry.abbr;  // Use abbr (IN, NP) not id (101, 123)
+    //     detectedCountryName = topCountry.name;  // e.g., "India"
+    //     detectedCountryAbbr = topCountry.abbr;  // e.g., "IN"
+    //     console.log(`[WMERNH] Detected country from SDK: "${detectedCountryCode}" (${detectedCountryName})`);
+    //     WazeToastr.Alerts.info(scriptName, `Detected country: ${detectedCountryName} (${detectedCountryAbbr})`);
+    //   }
+    // } catch (e) {
+    //   console.warn('[WMERNH] Could not detect country from SDK, defaulting to "NP":', e);
+    // }
+
     // Step 1: Fetch Countries sheet to map country code → sheet name
-    let countryCode = detectedCountryCode;
-    let sheetName = detectedCountryCode;
+    let detected = detectCountryFromSDK();
+    let retries = 0;
+    while (!detected && retries < 20) {
+        await new Promise(r => setTimeout(r, 500));
+        detected = detectCountryFromSDK();
+        retries++;
+    }
+    if (retries > 0) {
+      console.log(`[WMERNH] Country detected after ${retries + 1} attempt(s): ${activeCountryCode}`);
+    }
+    let countryCode = activeCountryCode;
+    let sheetName = activeCountryCode;
     try {
       const countryRows = await fetchSheetRows('Countries');
       console.log(`[WMERNH] Countries sheet has ${countryRows.length} entries:`, countryRows.map(r => r[0]).join(', '));
@@ -296,16 +350,18 @@ Version 2026.06.01.01:
         console.log(`[WMERNH] Found country mapping: ${countryCode} → sheet "${sheetName}"`);
       } else {
         console.warn(`[WMERNH] Country "${detectedCountryCode}" not found in Countries sheet, using defaults`);
+        WazeToastr.Alerts.warning(scriptName, `Detected country "${detectedCountryCode}" is not configured in Countries sheet. Using defaults. Contact script author to add support for your country.`);
         countryCode = detectedCountryCode;
         sheetName = detectedCountryCode;
         btnLabel = `${detectedCountryName} (${detectedCountryAbbr})`;
+        sheetName = 'NP';
       }
     } catch (e) {
       console.error(`[WMERNH] Failed to fetch Countries sheet, using defaults:`, e);
       countryCode = detectedCountryCode;
       sheetName = detectedCountryCode;
     }
-
+    showCountryToast();  // Show toast once WazeToastr is ready (or immediately on country change)
     activeCountryCode = countryCode;
     
     // Load translation settings from GoogleTranslate sheet (includes button label)
@@ -394,7 +450,7 @@ Version 2026.06.01.01:
       '.rnh-spinner { animation: rnh-spin 0.5s infinite linear; }',
       '@keyframes rnh-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }',
       '.rnh-progress-bar { width: 1%; height: 8px; background-color: #4CAF50; margin-bottom: 10px; border: 1px solid #333; transition: width 0.3s ease; display: none; }',
-      '.rnh-results { max-height: 400px; overflow-y: auto; }',
+      '.rnh-results { max-height: 525px; overflow-y: auto; }',
       '.rnh-segment-item { padding: 8px; margin-bottom: 5px; border: 1px solid #ddd; border-radius: 4px; background: #f9f9f9; cursor: pointer; }',
       '.rnh-segment-item:hover { background: #f0f0f0; border-color: #999; }',
       '.rnh-segment-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }',
@@ -415,9 +471,13 @@ Version 2026.06.01.01:
       '.rnh-alt-names { margin-top: 5px; padding-left: 10px; border-left: 2px solid #ddd; }',
       '.rnh-complete-icon { color: #4CAF50; }',
       '.rnh-button-container { margin-bottom: 10px; }',
-      '.rnh-preview-container { margin-bottom: 10px; display: flex; align-items: center; gap: 5px; }',
+      '.rnh-preview-container { margin-bottom: 1px; display: flex; align-items: center; gap: 5px; }',
       '.rnh-preview-checkbox { margin: 0; }',
       '.rnh-preview-label { margin: 0; font-size: 13px; cursor: pointer; }',
+      '.rnh-alt-names-container { margin-left: 24px; margin-top: 2px; display: flex; align-items: center; gap: 5px; }',
+      '.rnh-preview-alt-names-checkbox { margin: 0; }',
+      '.rnh-preview-alt-names-label { margin: 0; font-size: 12px; cursor: pointer; color: inherit; }',
+      '.rnh-preview-alt-names-checkbox:disabled + .rnh-preview-alt-names-label { color: #666; cursor: not-allowed; }',
     ].join('\n');
 
     GM_addStyle(styles);
@@ -1113,12 +1173,13 @@ Version 2026.06.01.01:
       container.appendChild(version);
 
       // Detected Country
-      const topCountry = sdk.DataModel.Countries.getTopCountry();
-      if (topCountry && topCountry.abbr) {
-        detectedCountryName = topCountry.name;  // e.g., "India"
-      }
+      // const topCountry = sdk.DataModel.Countries.getTopCountry();
+      // if (topCountry && topCountry.abbr) {
+      //   detectedCountryName = topCountry.name;  // e.g., "India"
+      // }
       const countryDisplay = document.createElement('wz-label');
-      countryDisplay.textContent = `Detected Country: ${detectedCountryName || 'Unknown'}`;
+      countryDisplay.textContent = `Detected Country: ${detectedCountryName || 'Unknown'} (${detectedCountryCode || '??'})`;
+      cachedElements.countryDisplay = countryDisplay;   // ← store for later updates
       countryDisplay.style.marginBottom = '10px';
       container.appendChild(countryDisplay);
 
@@ -1138,6 +1199,24 @@ Version 2026.06.01.01:
       previewContainer.appendChild(previewCheckbox);
       previewContainer.appendChild(previewLabel);
       container.appendChild(previewContainer);
+
+      // Preview alternative names checkbox (nested under preview)
+      const altNamesContainer = document.createElement('div');
+      altNamesContainer.className = 'rnh-alt-names-container';
+      const altNamesCheckbox = document.createElement('input');
+      altNamesCheckbox.type = 'checkbox';
+      altNamesCheckbox.id = 'rnh-preview-alt-names-checkbox';
+      altNamesCheckbox.className = 'rnh-preview-alt-names-checkbox';
+      altNamesCheckbox.checked = previewAltNamesEnabled;
+      altNamesCheckbox.onchange = onPreviewAltNamesChanged;
+      altNamesCheckbox.disabled = !previewEnabled; // Disable if preview is not enabled
+      const altNamesLabel = document.createElement('label');
+      altNamesLabel.htmlFor = 'rnh-preview-alt-names-checkbox';
+      altNamesLabel.className = 'rnh-preview-alt-names-label';
+      altNamesLabel.textContent = 'Also preview alternative names';
+      altNamesContainer.appendChild(altNamesCheckbox);
+      altNamesContainer.appendChild(altNamesLabel);
+      container.appendChild(altNamesContainer);
 
       // Scan counter
       const scanCounter = document.createElement('div');
@@ -1436,10 +1515,10 @@ Version 2026.06.01.01:
 
       // Preserve highway names ending with approved abbreviations or "Hwy" or "Ring Rd"
       // This includes: "NH41 - Prithvi Hwy", "NH39 - KTM Ring Rd", "NH77 - Bharatpur Ring Rd"
-      const approvedSuffixPattern = new RegExp(`\\s+(${Object.keys(wmernh_approvedAbbr).join('|')}|Hwy|Ring\\s+Rd)$`, 'i');
+    /*  const approvedSuffixPattern = new RegExp(`\\s+(${Object.keys(wmernh_approvedAbbr).join('|')}|Hwy|Ring\\s+Rd)$`, 'i');
       if (hwyPart.match(approvedSuffixPattern)) {
         return { needsFix: false };
-      }
+      } */ //Temorarily disabling this check to allow for more flexible suggestions
 
       // Check if the highway part needs fixing (e.g., "Ringroad" -> "Ring Rd")
       const hwyWords = hwyPart.split(/\s+/);
@@ -1451,12 +1530,12 @@ Version 2026.06.01.01:
         const wordLower = word.toLowerCase();
 
         // Check for "Ringroad" -> "Ring Rd"
-        if (wordLower === 'ringroad') {
+   /*     if (wordLower === 'ringroad') {
           hwyProposedWords[i] = 'Ring';
           hwyProposedWords.push('Rd');
           hwyChanged = true;
           break;
-        }
+        } */ // temporarily disabling this check to allow for more flexible suggestions
 
         // Check general suggestions
         const generalSuggestionKeyCi = Object.keys(wmernh_generalWordSuggestions).find((k) => k.toLowerCase() === wordLower);
@@ -1611,6 +1690,16 @@ Version 2026.06.01.01:
 
     if (fixAllButton) fixAllButton.disabled = false;
 
+    // Add header showing what issues are being displayed
+    const headerDiv = document.createElement('div');
+    headerDiv.style.cssText = 'background: #f5f5f5; padding: 8px; margin-bottom: 10px; border-radius: 4px; font-size: 12px; color: #666; font-weight: bold;';
+    if (previewAltNamesEnabled) {
+      headerDiv.textContent = '📋 Showing: Primary names + Alternative names';
+    } else {
+      headerDiv.textContent = '📋 Showing: Primary names only';
+    }
+    resultsContainer.appendChild(headerDiv);
+
     // Limit displayed segments for performance
     const displaySegments = scannedSegments.slice(0, MAX_SEGMENTS_TO_DISPLAY);
     const hiddenCount = scannedSegments.length - displaySegments.length;
@@ -1622,7 +1711,21 @@ Version 2026.06.01.01:
       resultsContainer.appendChild(warningDiv);
     }
 
+    let totalDisplayedIssues = 0;
+
     displaySegments.forEach((segment) => {
+      // Filter issues based on preview alternative names setting
+      const issuesToDisplay = previewAltNamesEnabled 
+        ? segment.issues 
+        : segment.issues.filter((issue) => issue.type === 'primary');
+
+      // Skip segment if no issues to display after filtering
+      if (issuesToDisplay.length === 0) {
+        return;
+      }
+
+      totalDisplayedIssues += issuesToDisplay.length;
+
       const item = document.createElement('div');
       item.className = 'rnh-segment-item';
 
@@ -1649,8 +1752,8 @@ Version 2026.06.01.01:
       header.appendChild(roadType);
       item.appendChild(header);
 
-      // Display issues
-      segment.issues.forEach((issue) => {
+      // Display filtered issues
+      issuesToDisplay.forEach((issue) => {
         const nameRow = document.createElement('div');
         nameRow.className = 'rnh-name-row';
 
@@ -1681,11 +1784,20 @@ Version 2026.06.01.01:
       const fixButton = document.createElement('button');
       fixButton.className = 'rnh-fix-button';
       fixButton.textContent = 'Fix';
-      fixButton.onclick = () => fixSegmentNames(segment);
+      fixButton.onclick = () => {
+        // Determine which issue types to fix based on preview settings
+        const issueTypeFilter = previewAltNamesEnabled ? ['primary', 'alt'] : ['primary'];
+        fixSegmentNames(segment, issueTypeFilter);
+      };
       item.appendChild(fixButton);
 
       resultsContainer.appendChild(item);
     });
+
+    // Show message if no issues to display after filtering
+    if (totalDisplayedIssues === 0) {
+      resultsContainer.innerHTML = '<div class="rnh-no-issues">✓ No issues found in current view!</div>';
+    }
   }
 
   async function selectSegment(segmentId) {
@@ -1753,8 +1865,9 @@ Version 2026.06.01.01:
   /**
    * Fix naming issues for a single segment
    * @param {Object} segment - Segment object with issues to fix
+   * @param {Array} issueTypeFilter - Optional array of issue types to fix (e.g., ['primary', 'alt']. If omitted, fixes all.
    */
-  async function fixSegmentNames(segment) {
+  async function fixSegmentNames(segment, issueTypeFilter = null) {
     try {
       // Get the current city from the segment's existing streets (preserve city)
       const getCityForStreet = (streetId) => {
@@ -1767,8 +1880,13 @@ Version 2026.06.01.01:
       const altStreetUpdates = {}; // Only store streets that need updating
       let hasChanges = false;
 
+      // Filter issues based on issueTypeFilter if provided
+      const issuesToProcess = issueTypeFilter 
+        ? segment.issues.filter((issue) => issueTypeFilter.includes(issue.type))
+        : segment.issues;
+
       // Process each issue
-      segment.issues.forEach((issue) => {
+      issuesToProcess.forEach((issue) => {
         if (issue.type === 'primary') {
           // Get the city from current primary street to preserve it
           const cityId = getCityForStreet(segment.primaryStreetId);
@@ -1867,6 +1985,31 @@ Version 2026.06.01.01:
     const fixAllButton = cachedElements.fixAllButton;
 
     try {
+      // Determine which issue types to fix based on preview settings
+      let issueTypeFilter = ['primary']; // Always fix primary by default
+      let fixMessage = '';
+
+      if (previewAltNamesEnabled) {
+        issueTypeFilter = ['primary', 'alt']; // Fix both primary and alternative names
+        fixMessage = 'Fixing primary and alternative names...';
+      } else {
+        fixMessage = 'Fixing primary names only...';
+      }
+
+      console.log(`${scriptName}: ${fixMessage}`);
+
+      // Filter segments that have issues matching the current preview settings
+      const segmentsToFix = scannedSegments.filter((segment) => {
+        const hasMatchingIssues = segment.issues.some((issue) => issueTypeFilter.includes(issue.type));
+        return hasMatchingIssues;
+      });
+
+      if (segmentsToFix.length === 0) {
+        console.warn(`${scriptName}: No segments to fix with current settings`);
+        WazeToastr.Alerts.info(scriptName, `No ${issueTypeFilter.length === 1 ? 'primary name issues' : 'issues'} to fix.`);
+        return;
+      }
+
       updateProgress(true, 1);
       if (fixAllButton) {
         fixAllButton.disabled = true;
@@ -1875,11 +2018,12 @@ Version 2026.06.01.01:
 
       let processed = 0;
       let failed = 0;
-      const total = scannedSegments.length;
+      const total = segmentsToFix.length;
 
-      for (const segment of scannedSegments) {
+      for (const segment of segmentsToFix) {
         try {
-          await fixSegmentNames(segment);
+          // Pass the issue type filter to fixSegmentNames
+          await fixSegmentNames(segment, issueTypeFilter);
           processed++;
         } catch (err) {
           failed++;
@@ -1892,6 +2036,8 @@ Version 2026.06.01.01:
 
       if (failed > 0) {
         console.warn(`${scriptName}: Fixed ${processed} segments, ${failed} failed`);
+      } else {
+        console.log(`${scriptName}: Successfully fixed all ${processed} segments`);
       }
 
       // Rescan to update results
@@ -1995,7 +2141,26 @@ Version 2026.06.01.01:
         return;
       }
 
-      const features = scannedSegments.map((segment) => {
+      // Filter segments to highlight based on preview settings
+      const segmentsToHighlight = scannedSegments.filter((segment) => {
+        // Check if segment has primary name issues
+        const hasPrimaryIssue = segment.issues.some((issue) => issue.type === 'primary');
+        // Check if segment has alternative name issues
+        const hasAltIssue = segment.issues.some((issue) => issue.type === 'alt');
+
+        // Highlight if:
+        // - Preview is enabled AND has primary issue
+        // - OR Preview is enabled AND preview alt names is enabled AND has alt issue
+        if (previewEnabled && hasPrimaryIssue) {
+          return true;
+        }
+        if (previewEnabled && previewAltNamesEnabled && hasAltIssue) {
+          return true;
+        }
+        return false;
+      });
+
+      const features = segmentsToHighlight.map((segment) => {
         const seg = sdk.DataModel.Segments.getById({ segmentId: segment.id });
         return {
           type: 'Feature',
@@ -2007,7 +2172,7 @@ Version 2026.06.01.01:
       sdk.Map.removeAllFeaturesFromLayer({ layerName: LAYER_NAME });
       sdk.Map.addFeaturesToLayer({ layerName: LAYER_NAME, features });
 
-      console.log(`${scriptName}: Highlighted ${features.length} segments`);
+      console.log(`${scriptName}: Highlighted ${features.length} segments (preview=${previewEnabled}, altNames=${previewAltNamesEnabled})`);
     } catch (error) {
       console.error(`${scriptName}: Error highlighting segments:`, error);
     }
@@ -2021,6 +2186,18 @@ Version 2026.06.01.01:
     localStorage.setItem('wme-rnh-preview-enabled', previewEnabled);
     console.log(`${scriptName}: Preview ${previewEnabled ? 'enabled' : 'disabled'}`);
 
+    // Enable/disable the alt names checkbox based on preview state
+    const altNamesCheckbox = document.getElementById('rnh-preview-alt-names-checkbox');
+    if (altNamesCheckbox) {
+      altNamesCheckbox.disabled = !previewEnabled;
+      // If preview is disabled, also disable alt names highlighting
+      if (!previewEnabled) {
+        previewAltNamesEnabled = false;
+        altNamesCheckbox.checked = false;
+        localStorage.setItem('wme-rnh-preview-alt-names-enabled', false);
+      }
+    }
+
     if (previewEnabled) {
       highlightSegments();
     } else {
@@ -2029,17 +2206,34 @@ Version 2026.06.01.01:
   }
 
   /**
+   * Handle preview alternative names checkbox change
+   */
+  function onPreviewAltNamesChanged(event) {
+    previewAltNamesEnabled = event.target.checked;
+    localStorage.setItem('wme-rnh-preview-alt-names-enabled', previewAltNamesEnabled);
+    console.log(`${scriptName}: Preview alternative names ${previewAltNamesEnabled ? 'enabled' : 'disabled'}`);
+
+    // Refresh highlights and results when this setting changes
+    if (previewEnabled) {
+      highlightSegments();
+      displayResults(); // Update results display to show/hide alt name issues
+    }
+  }
+
+  /**
    * Set up listener to detect country changes and reload data.
    * Watches for 'wme-map-move-end' events; if the top country changes, reloads spreadsheet data.
    */
   function setupCountryChangeListener() {
+    let previousCountryCode = activeCountryCode;
     sdk.Events.on({
       eventName: 'wme-map-move-end',
       eventHandler: async () => {
         try {
-          const topCountry = sdk.DataModel.Countries.getTopCountry();
-          if (topCountry && topCountry.abbr && topCountry.abbr !== activeCountryCode) {
-            console.log(`[WMERNH] Country changed from "${activeCountryCode}" to "${topCountry.abbr}", reloading data...`);
+          detectCountryFromSDK();  // Updates activeCountryCode, variables, sidebar & toast
+          if (activeCountryCode !== previousCountryCode) {
+            console.log(`[WMERNH] Country changed from "${previousCountryCode}" to "${activeCountryCode}", reloading data...`);
+            previousCountryCode = activeCountryCode;
             await loadCountryData();
           }
         } catch (e) {
@@ -2067,6 +2261,7 @@ Version 2026.06.01.01:
       return;
     }
     unsafeWindow.SDK_INITIALIZED.then(wmernh_bootstrap);
+    console.log(`${scriptName}, Version: ${scriptVersion} - Initialized successfully with WME SDK`);
   }
   waitForWME();
 
