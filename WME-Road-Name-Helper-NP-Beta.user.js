@@ -2297,6 +2297,13 @@ Version 2026.06.23.02:
   }
   /*
 Changelog:
+Version 2026.06.23.02:
+<strong>New Features & Fixes:</strong><br>
+- Fixed incorrect prefix matching for single-character suffixes (e.g., "1" or "I") that caused false suggestions like "1º de Maio" or "Inf.ª".<br>
+- Added support for filtering Primary name and alternate names separately in the sidebar panel.<br>
+- Added management of suffixes with google spreadsheet for easy updates.<br>
+- Added support for Portugal Country Sheet <br>
+- Various bug fixes and improvements.<br>
 Version 2026.06.22.01:
 <strong>New Features & Fixes:</strong><br>
 - Added support for filtering Primary name and alternate names separately in the sidebar panel.<br>
