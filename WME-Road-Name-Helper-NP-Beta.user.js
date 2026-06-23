@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP Beta
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2026.06.22.04
+// @version         2026.06.23.02
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
@@ -23,8 +23,9 @@
 (function () {
   ('use strict');
   const updateMessage = `
-Version 2026.06.22.01:
+Version 2026.06.23.02:
 <strong>New Features & Fixes:</strong><br>
+- Fixed incorrect prefix matching for single-character suffixes (e.g., "1" or "I") that caused false suggestions like "1º de Maio" or "Inf.ª".<br>
 - Added support for filtering Primary name and alternate names separately in the sidebar panel.<br>
 - Added management of suffixes with google spreadsheet for easy updates.<br>
 - Added support for Portugal Country Sheet <br>
@@ -943,7 +944,7 @@ Version 2026.06.22.01:
     });
   }
 
-  function wmernh_analyzeSuffix(suffix) {
+  function wmernh_analyzeSuffix(suffix, exactOnly = false) {
     const suffixLower = suffix.toLowerCase();
     let result = { status: 'info', message: 'No match for suffix.', proposed: suffix, original: suffix };
 
@@ -976,12 +977,18 @@ Version 2026.06.22.01:
       return { status: 'valid', message: casedNoAbbr, proposed: casedNoAbbr, original: suffix };
     }
 
+    // ★ NEW: Purely numeric suffixes are address numbers, not abbreviable words
+    if (suffix.length <= 1) {
+    //if (/^\d+$/.test(suffix)) {
+      return result;  // returns { status: 'info', message: 'No match for suffix.' }
+    }
+
     const escapedSuffix = suffix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const suffixRegex = new RegExp(`^${escapedSuffix}`, 'i');
 
     // 3. Suggestion: Typed is (prefix of) a full word that should be abbreviated (e.g., "Street" or "Stre" -> "St")
     let suggestFromFullKey = Object.keys(wmernh_suggestedAbbr).find((key) => key.toLowerCase() === suffixLower);
-    if (!suggestFromFullKey) {
+    if (!suggestFromFullKey && !exactOnly) {
       suggestFromFullKey = Object.keys(wmernh_suggestedAbbr).find((key) => suffixRegex.test(key));
     }
     if (suggestFromFullKey) {
@@ -1002,15 +1009,18 @@ Version 2026.06.22.01:
     }
 
     // 4. Suggestion: Typed is (prefix of) a known non-abbreviated word (e.g., "Lan" -> "Lane")
-    const knownNoAbbrCompletion = wmernh_knownNoAbbr.find((key) => suffixRegex.test(key));
-    if (knownNoAbbrCompletion && knownNoAbbrCompletion.toLowerCase() !== suffixLower) {
-      return { status: 'check', message: `Use ${knownNoAbbrCompletion}`, proposed: knownNoAbbrCompletion, original: suffix };
+    if (!exactOnly) {
+      const knownNoAbbrCompletion = wmernh_knownNoAbbr.find((key) => suffixRegex.test(key));
+      if (knownNoAbbrCompletion && knownNoAbbrCompletion.toLowerCase() !== suffixLower) {
+        return { status: 'check', message: `Use ${knownNoAbbrCompletion}`, proposed: knownNoAbbrCompletion, original: suffix };
+      }
     }
-
     // 5. Suggestion: Typed is (prefix of) an approved abbreviation (e.g., "Al" -> "Ally")
-    const approvedAbbrCompletionKey = Object.keys(wmernh_approvedAbbr).find((key) => suffixRegex.test(key));
-    if (approvedAbbrCompletionKey && approvedAbbrCompletionKey.toLowerCase() !== suffixLower) {
-      return { status: 'check', message: `Use ${approvedAbbrCompletionKey} for ${wmernh_approvedAbbr[approvedAbbrCompletionKey]}`, proposed: approvedAbbrCompletionKey, original: suffix };
+    if (!exactOnly) {
+      const approvedAbbrCompletionKey = Object.keys(wmernh_approvedAbbr).find((key) => suffixRegex.test(key));
+      if (approvedAbbrCompletionKey && approvedAbbrCompletionKey.toLowerCase() !== suffixLower) {
+        return { status: 'check', message: `Use ${approvedAbbrCompletionKey} for ${wmernh_approvedAbbr[approvedAbbrCompletionKey]}`, proposed: approvedAbbrCompletionKey, original: suffix };
+      }
     }
 
     return result;
@@ -1616,7 +1626,7 @@ Version 2026.06.22.01:
     // Process suffix (last word) - only if not already processed
     if (currentWords.length > 0 && proposedWords[proposedWords.length - 1] === currentWords[currentWords.length - 1]) {
       const potentialSuffix = currentWords[currentWords.length - 1];
-      const suffixAnalysis = wmernh_analyzeSuffix(potentialSuffix);
+      const suffixAnalysis = wmernh_analyzeSuffix(potentialSuffix, true); // exactOnly = true for suffix to avoid over-suggesting
 
       if (suffixAnalysis.status === 'check' && suffixAnalysis.proposed.toLowerCase() !== potentialSuffix.toLowerCase()) {
         proposedWords[currentWords.length - 1] = suffixAnalysis.proposed;
@@ -2287,6 +2297,12 @@ Version 2026.06.22.01:
   }
   /*
 Changelog:
+Version 2026.06.22.01:
+<strong>New Features & Fixes:</strong><br>
+- Added support for filtering Primary name and alternate names separately in the sidebar panel.<br>
+- Added management of suffixes with google spreadsheet for easy updates.<br>
+- Added support for Portugal Country Sheet <br>
+- Various bug fixes and improvements.<br>
 Version 2026.04.11.01:
 - Now it will detect NH-[A-Z0-9] patterns and ensure capital letters.<br>
 - Now it will detect MDR-[A-Z0-9] patterns and ensure capital letters.<br>
