@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP Beta
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2026.06.23.02
+// @version         2026.06.24.01
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
@@ -23,12 +23,9 @@
 (function () {
   ('use strict');
   const updateMessage = `
-Version 2026.06.23.02:
+Version 2026.06.24.01:
 <strong>New Features & Fixes:</strong><br>
-- Fixed incorrect prefix matching for single-character suffixes (e.g., "1" or "I") that caused false suggestions like "1º de Maio" or "Inf.ª".<br>
-- Added support for filtering Primary name and alternate names separately in the sidebar panel.<br>
-- Added management of suffixes with google spreadsheet for easy updates.<br>
-- Added support for Portugal Country Sheet <br>
+- Added support for regex-based preserve-case and suggestion-case rules in the Google Sheets data.<br>
 - Various bug fixes and improvements.<br>
 `;
   const scriptVersion = GM_info.script.version.toString();
@@ -89,8 +86,17 @@ Version 2026.06.23.02:
   // Suffix Suggestion Data — loaded dynamically from Google Sheets
   let wmernh_suggestedAbbr = {};
 
+  // Regex-based Suffix Suggestion Data — keys with 'regex:' prefix are stored here
+  // Format: { regex: RegExp, replacement: string }
+  // Google Sheets key formats:
+  //   regex:pattern           → bare pattern, case-insensitive (e.g., regex:^रा(\d+)$)
+  //   regex:/pattern/flags    → JS literal format (e.g., regex:/(रा)([१-९][०-९]*)/g)
+  // Value can use $1, $2, … backreferences
+  let wmernh_suggestedAbbrRegex = [];
+
   // Preserve Case Words — loaded dynamically from Google Sheets
   let wmernh_preserveCaseWords = [];
+  let wmernh_preserveCaseWordsRegex = [];
 
   // Highway Exact Match Data — loaded dynamically from Google Sheets
   let wmernh_suggestedHwyAbbr = {};
@@ -136,6 +142,8 @@ Version 2026.06.23.02:
   function buildDataObjects(rows) {
     const approvedAbbr = {};
     const suggestedAbbr = {};
+    const suggestedAbbrRegex = [];
+    const preserveCaseWordsRegex = [];
     const preserveCaseWords = [];
     const suggestedHwyAbbr = {};
     const knownNoAbbr = [];
@@ -151,10 +159,59 @@ Version 2026.06.23.02:
           if (value) approvedAbbr[key] = value;
           break;
         case 'suggestedAbbr':
-          if (value) suggestedAbbr[key] = value;
+          if (value) {
+            if (key.startsWith('regex:')) {
+              try {
+                const raw = key.substring(6); // Remove 'regex:' prefix
+                let pattern, flags;
+                // Support both /pattern/flags and bare pattern formats
+                if (raw.startsWith('/')) {
+                  const lastSlash = raw.lastIndexOf('/');
+                  if (lastSlash > 0) {
+                    pattern = raw.substring(1, lastSlash);
+                    const userFlags = raw.substring(lastSlash + 1);
+                    // Always ensure 'i' (case-insensitive) is present
+                    flags = userFlags.includes('i') ? userFlags : userFlags + 'i';
+                  } else {
+                    // Malformed: single slash, treat whole thing as pattern
+                    pattern = raw.substring(1);
+                    flags = 'i';
+                  }
+                } else {
+                  pattern = raw;
+                  flags = 'i';
+                }
+                suggestedAbbrRegex.push({ regex: new RegExp(pattern, flags), replacement: value });
+              } catch (e) {
+                console.warn('[WMERNH] Invalid regex in suggestedAbbr:', key, e);
+              }
+            } else {
+              suggestedAbbr[key] = value;
+            }
+          }
           break;
         case 'preserveCase':
-          preserveCaseWords.push(key);
+          if (key.startsWith('regex:')) {
+            const raw = key.substring(6); // Remove 'regex:' prefix
+            let pattern, flags;
+            if (raw.startsWith('/')) {
+              const lastSlash = raw.lastIndexOf('/');
+              if (lastSlash > 0) {
+                pattern = raw.substring(1, lastSlash);
+                const userFlags = raw.substring(lastSlash + 1);
+                flags = userFlags.includes('i') ? userFlags : userFlags + 'i';
+              } else {
+                pattern = raw.substring(1);
+                flags = 'i';
+              }
+            } else {
+              pattern = raw;
+              flags = 'i';
+            }
+            preserveCaseWordsRegex.push({ regex: new RegExp(pattern, flags), replacement: value || '$&' });
+          } else {
+            preserveCaseWords.push(key);
+          }
           break;
         case 'hwy_exact':
           if (value) suggestedHwyAbbr[key] = value;
@@ -173,13 +230,15 @@ Version 2026.06.23.02:
 
     wmernh_approvedAbbr = approvedAbbr;
     wmernh_suggestedAbbr = suggestedAbbr;
+    wmernh_suggestedAbbrRegex = suggestedAbbrRegex;
     wmernh_preserveCaseWords = preserveCaseWords;
+    wmernh_preserveCaseWordsRegex = preserveCaseWordsRegex;
     wmernh_suggestedHwyAbbr = suggestedHwyAbbr;
     wmernh_knownNoAbbr = knownNoAbbr;
     wmernh_generalWordSuggestions = generalWordSuggestions;
     wmernh_generalWordApprovedAbbr = generalWordApprovedAbbr;
 
-    console.log(`[WMERNH] Data loaded: approvedAbbr=${Object.keys(approvedAbbr).length}, suggestedAbbr=${Object.keys(suggestedAbbr).length}, preserveCase=${preserveCaseWords.length}, hwyExact=${Object.keys(suggestedHwyAbbr).length}, noAbbr=${knownNoAbbr.length}, generalSugg=${Object.keys(generalWordSuggestions).length}, generalAppr=${Object.keys(generalWordApprovedAbbr).length}`);
+    console.log(`[WMERNH] Data loaded: approvedAbbr=${Object.keys(approvedAbbr).length}, suggestedAbbr=${Object.keys(suggestedAbbr).length}, suggestedAbbrRegex=${suggestedAbbrRegex.length}, preserveCase=${preserveCaseWords.length}, preserveCaseRegex=${preserveCaseWordsRegex.length}, hwyExact=${Object.keys(suggestedHwyAbbr).length}, noAbbr=${knownNoAbbr.length}, generalSugg=${Object.keys(generalWordSuggestions).length}, generalAppr=${Object.keys(generalWordApprovedAbbr).length}`);
   }
 
   /**
@@ -395,7 +454,7 @@ Version 2026.06.23.02:
     try {
       const rows = await fetchSheetRows(sheetName);
       buildDataObjects(rows);
-      console.log(`[WMERNH] Data loaded for country "${activeCountryCode}": approvedAbbr=${Object.keys(wmernh_approvedAbbr).length}, suggestedAbbr=${Object.keys(wmernh_suggestedAbbr).length}`);
+      console.log(`[WMERNH] Data loaded for country "${activeCountryCode}": approvedAbbr=${Object.keys(wmernh_approvedAbbr).length}, suggestedAbbr=${Object.keys(wmernh_suggestedAbbr).length}, suggestedAbbrRegex=${wmernh_suggestedAbbrRegex.length}`);
 
       // Save to country-specific cache
       try {
@@ -423,6 +482,14 @@ Version 2026.06.23.02:
         // If word matches a preserve-case word (case-insensitive), use the preserved version
         const preserve = wmernh_preserveCaseWords.find((w) => w.toLowerCase() === txt.toLowerCase());
         if (preserve) return preserve;
+        // Check regex-based preserve-case patterns
+        for (const entry of wmernh_preserveCaseWordsRegex) {
+          try {
+            if (entry.regex.test(txt)) {
+              return txt.replace(entry.regex, entry.replacement);
+            }
+          } catch (e) { /* skip invalid regex */ }
+        }
         // Handle hyphenated words
         if (txt.includes('-')) {
           const parts = txt.split('-');
@@ -1023,6 +1090,18 @@ Version 2026.06.23.02:
       }
     }
 
+    // 6. Regex-based suggestions (e.g., regex:^रा(\d+)$ → रारा०$1)
+    for (const entry of wmernh_suggestedAbbrRegex) {
+      try {
+        const proposed = suffix.replace(entry.regex, entry.replacement);
+        if (proposed !== suffix && proposed.toLowerCase() !== suffixLower) {
+          return { status: 'check', message: `Use ${proposed}`, proposed: proposed, original: suffix };
+        }
+      } catch (e) {
+        console.warn('[WMERNH] Error applying regex suggestion:', entry, e);
+      }
+    }
+
     return result;
   }
 
@@ -1557,8 +1636,16 @@ Version 2026.06.23.02:
           }
         }
 
-        // Check suffix suggestions
-        const devanagariSuggestion = wmernh_suggestedAbbr[word];
+        // Check suffix suggestions (literal + regex)
+        let devanagariSuggestion = wmernh_suggestedAbbr[word];
+        if (!devanagariSuggestion) {
+          for (const entry of wmernh_suggestedAbbrRegex) {
+            try {
+              const proposed = word.replace(entry.regex, entry.replacement);
+              if (proposed !== word) { devanagariSuggestion = proposed; break; }
+            } catch (e) { /* skip invalid regex */ }
+          }
+        }
         if (devanagariSuggestion && devanagariSuggestion !== word) {
           hwyProposedWords[i] = devanagariSuggestion;
           hwyChanged = true;
@@ -1591,10 +1678,18 @@ Version 2026.06.23.02:
       }
     }
 
-    // Check for standalone Devanagari abbreviations in any position
+    // Check for standalone Devanagari abbreviations in any position (literal + regex)
     for (let i = 0; i < currentWords.length; i++) {
       const word = currentWords[i];
-      const devanagariSuggestion = wmernh_suggestedAbbr[word];
+      let devanagariSuggestion = wmernh_suggestedAbbr[word];
+      if (!devanagariSuggestion) {
+        for (const entry of wmernh_suggestedAbbrRegex) {
+          try {
+            const proposed = word.replace(entry.regex, entry.replacement);
+            if (proposed !== word) { devanagariSuggestion = proposed; break; }
+          } catch (e) { /* skip invalid regex */ }
+        }
+      }
       if (devanagariSuggestion && devanagariSuggestion !== word) {
         proposedWords[i] = devanagariSuggestion;
         changed = true;
@@ -2297,6 +2392,10 @@ Version 2026.06.23.02:
   }
   /*
 Changelog:
+Version 2026.06.24.01:
+<strong>New Features & Fixes:</strong><br>
+- Added support for regex-based preserve-case and suggestion-case rules in the Google Sheets data.<br>
+- Various bug fixes and improvements.<br>
 Version 2026.06.23.02:
 <strong>New Features & Fixes:</strong><br>
 - Fixed incorrect prefix matching for single-character suffixes (e.g., "1" or "I") that caused false suggestions like "1º de Maio" or "Inf.ª".<br>
