@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP Beta
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2026.06.24.01
+// @version         2026.07.02.05
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
@@ -23,9 +23,11 @@
 (function () {
   ('use strict');
   const updateMessage = `
-Version 2026.06.24.01:
+Version 2026.07.02.05:
 <strong>New Features & Fixes:</strong><br>
-- Added support for regex-based preserve-case and suggestion-case rules in the Google Sheets data.<br>
+- Added color picker to change the highlight color<br>
+- Highlight layer now syncs with the Roads layer visibility<br>
+- Bug fix for Portugal Abbreviation data<br>
 - Various bug fixes and improvements.<br>
 `;
   const scriptVersion = GM_info.script.version.toString();
@@ -43,6 +45,14 @@ Version 2026.06.24.01:
   const RESCAN_DELAY_AFTER_FIX = 300; // Delay before rescanning after fix
   const MAX_SEGMENTS_TO_DISPLAY = 100; // Limit displayed segments for performance
   const LAYER_NAME = `${scriptName}`; // Layer name for highlighting
+
+  const HIGHLIGHT_COLOR_KEY = 'wme-rnh-highlight-color';
+  const DEFAULT_HIGHLIGHT_COLOR = '#ff8800'; // orange fallback
+
+  // Mutable style state for highlight layer
+  const highlightStyle = {
+    color: localStorage.getItem(HIGHLIGHT_COLOR_KEY) || DEFAULT_HIGHLIGHT_COLOR,
+  };
 
   // Nepali translation special rules (pre-translation, applied before Google Translate)
   const NEPALI_TRANSLATION_RULES = [
@@ -69,6 +79,7 @@ Version 2026.06.24.01:
   let eventSubscriptions = [];
   let previewEnabled = localStorage.getItem('wme-rnh-preview-enabled') === 'true';
   let previewAltNamesEnabled = localStorage.getItem('wme-rnh-preview-alt-names-enabled') === 'true';
+  let roadsLayerVisible = true;
 
   // Cached UI elements
   const cachedElements = {
@@ -476,35 +487,59 @@ Version 2026.06.24.01:
   // ========== END GOOGLE SHEETS DATA LOADING ==========
 
   function wmernh_titleCase(str) {
-    return str
-      .split(/\s+/)
-      .map(function (txt) {
-        // If word matches a preserve-case word (case-insensitive), use the preserved version
-        const preserve = wmernh_preserveCaseWords.find((w) => w.toLowerCase() === txt.toLowerCase());
-        if (preserve) return preserve;
-        // Check regex-based preserve-case patterns
-        for (const entry of wmernh_preserveCaseWordsRegex) {
-          try {
-            if (entry.regex.test(txt)) {
-              return txt.replace(entry.regex, entry.replacement);
-            }
-          } catch (e) { /* skip invalid regex */ }
-        }
-        // Handle hyphenated words
-        if (txt.includes('-')) {
-          const parts = txt.split('-');
-          const firstPart = parts[0];
-          const rest = parts.slice(1).join('-');
-          // Road code: only when starts with 'NH', 'MDR', or 'SH' and second part contains digits (e.g., NH-125A, MDR-123, SH-45B)
-          if (/^(nh|mdr|sh)$/i.test(firstPart) && /\d/.test(rest)) {
-            return txt.replace(/^([A-Za-z]+)-(.+)$/i, (match, p1, p2) => p1.toUpperCase() + '-' + p2.toUpperCase());
+    // Split by whitespace and commas, capturing separators to preserve them
+    const tokens = str.split(/(\s+|,)/);
+    const words = tokens.filter((t, i) => i % 2 === 0 && t);  // non-separators
+    const separators = tokens.filter((t, i) => i % 2 === 1);  // separators (spaces/commas)
+
+    const titleCasedWords = words.map(function (txt, index) {
+      // Check if this word is preceded by opening quotes or parentheses
+      const prevToken = index > 0 ? words[index - 1] : '';
+      const followsOpenQuoteOrParen = /["(]$/.test(prevToken);
+      
+      // If word matches a preserve-case word (case-insensitive), use the preserved version
+      const preserve = wmernh_preserveCaseWords.find((w) => w.toLowerCase() === txt.toLowerCase());
+      if (preserve) return preserve;
+      
+      // Check regex-based preserve-case patterns
+      for (const entry of wmernh_preserveCaseWordsRegex) {
+        try {
+          if (entry.regex.test(txt)) {
+            return txt.replace(entry.regex, entry.replacement);
           }
-          // For all other hyphenated words (e.g., East-west → East-West, Chandrapur-Gaur → Chandrapur-Gaur), title case each part
-          return parts.map((part) => part.charAt(0).toUpperCase() + part.substr(1).toLowerCase()).join('-');
+        } catch (e) { /* skip invalid regex */ }
+      }
+      
+      // If word follows an opening quote or paren, preserve its original capitalization
+      // (These are often proper nouns like titles or names in parentheses)
+      if (followsOpenQuoteOrParen) {
+        return txt;
+      }
+      
+      // Handle hyphenated words
+      if (txt.includes('-')) {
+        const parts = txt.split('-');
+        const firstPart = parts[0];
+        const rest = parts.slice(1).join('-');
+        // Road code: only when starts with 'NH', 'MDR', or 'SH' and second part contains digits (e.g., NH-125A, MDR-123, SH-45B)
+        if (/^(nh|mdr|sh)$/i.test(firstPart) && /\d/.test(rest)) {
+          return txt.replace(/^([A-Za-z]+)-(.+)$/i, (match, p1, p2) => p1.toUpperCase() + '-' + p2.toUpperCase());
         }
-        return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
-      })
-      .join(' ');
+        // For all other hyphenated words (e.g., East-west → East-West, Chandrapur-Gaur → Chandrapur-Gaur), title case each part
+        return parts.map((part) => part.charAt(0).toUpperCase() + part.substr(1).toLowerCase()).join('-');
+      }
+      return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
+    });
+
+    // Reconstruct with original separators
+    let result = '';
+    for (let i = 0; i < titleCasedWords.length; i++) {
+      result += titleCasedWords[i];
+      if (i < separators.length) {
+        result += separators[i];
+      }
+    }
+    return result;
   }
 
   let wmernh_valueObserver;
@@ -532,6 +567,9 @@ Version 2026.06.24.01:
       '.rnh-fix-button { padding: 4px 8px; font-size: 11px; background: #4CAF50; color: white; border: none; border-radius: 3px; cursor: pointer; }',
       '.rnh-fix-button:hover { background: #45a049; }',
       '.rnh-fix-button:disabled { background: #ccc; cursor: not-allowed; }',
+      '.rnh-select-button { padding: 4px 8px; font-size: 11px; background: #2196F3; color: white; border: none; border-radius: 3px; cursor: pointer; margin-left: 4px; }',
+      '.rnh-select-button:hover { background: #0b7dda; }',
+      '.rnh-select-button:disabled { background: #ccc; cursor: not-allowed; }',
       '.rnh-fix-all-button { width: 100%; padding: 8px; margin-bottom: 10px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }',
       '.rnh-fix-all-button:hover { background: #1976D2; }',
       '.rnh-fix-all-button:disabled { background: #ccc; cursor: not-allowed; }',
@@ -546,6 +584,10 @@ Version 2026.06.24.01:
       '.rnh-preview-alt-names-checkbox { margin: 0; }',
       '.rnh-preview-alt-names-label { margin: 0; font-size: 12px; cursor: pointer; color: inherit; }',
       '.rnh-preview-alt-names-checkbox:disabled + .rnh-preview-alt-names-label { color: #666; cursor: not-allowed; }',
+      '.rnh-color-picker-container { margin-bottom: 10px; display: flex; align-items: center; gap: 4px; }',
+      '.rnh-color-picker-label  { font-size: 11px; font-weight: bold; min-width: 85px; }',
+      '.rnh-color-picker-input  { cursor: pointer; border: 1px solid #ccc; border-radius: 3px; height: 24px; width: 40px; padding: 1px; }',
+      '.rnh-color-hex           { font-size: 11px; color: #666; font-family: monospace; }',
     ].join('\n');
 
     GM_addStyle(styles);
@@ -1307,6 +1349,32 @@ Version 2026.06.24.01:
       altNamesContainer.appendChild(altNamesLabel);
       container.appendChild(altNamesContainer);
 
+      // Color picker for highlight layer (below preview options)
+      const colorPickerContainer = document.createElement('div');
+      colorPickerContainer.className = 'rnh-color-picker-container';
+      const colorPickerLabel = document.createElement('label');
+      colorPickerLabel.className = 'rnh-color-picker-label';
+      colorPickerLabel.textContent = 'Highlight Color:';
+      const colorPickerInput = document.createElement('input');
+      colorPickerInput.type = 'color';
+      colorPickerInput.id = 'rnh-color-picker';
+      colorPickerInput.className = 'rnh-color-picker-input';
+      colorPickerInput.value = highlightStyle.color;
+      colorPickerInput.onchange = onHighlightColorChanged;
+      const colorHexDisplay = document.createElement('span');
+      colorHexDisplay.className = 'rnh-color-hex';
+      colorHexDisplay.textContent = highlightStyle.color.toUpperCase();
+      
+      // Update hex display when color changes
+      colorPickerInput.addEventListener('input', (e) => {
+        colorHexDisplay.textContent = e.target.value.toUpperCase();
+      });
+      
+      colorPickerContainer.appendChild(colorPickerLabel);
+      colorPickerContainer.appendChild(colorPickerInput);
+      colorPickerContainer.appendChild(colorHexDisplay);
+      container.appendChild(colorPickerContainer);
+
       // Scan counter
       const scanCounter = document.createElement('div');
       scanCounter.className = 'rnh-scan-counter';
@@ -1361,6 +1429,35 @@ Version 2026.06.24.01:
           eventHandler: debouncedScan,
         }),
       );
+
+      // Listen for roads layer visibility changes via DOM observation
+      // (SDK event 'wme-layer-checkbox-toggled' is not reliably firing in this version)
+      const observeRoadsLayerCheckbox = () => {
+        try {
+          const roadsCheckbox = document.getElementById('layer-switcher-item_road');
+          if (roadsCheckbox) {
+            const isVisible = roadsCheckbox.hasAttribute('checked');
+            if (isVisible !== roadsLayerVisible) {
+              console.log(`${scriptName}: Roads layer visibility changed - visible: ${isVisible}`);
+              roadsLayerVisible = isVisible;
+              if (!roadsLayerVisible) {
+                sdk.Map.removeAllFeaturesFromLayer({ layerName: LAYER_NAME });
+                console.log(`${scriptName}: Roads layer hidden, highlight layer cleared`);
+              } else if (previewEnabled) {
+                highlightSegments();
+                console.log(`${scriptName}: Roads layer visible, highlight restored`);
+              }
+            }
+          }
+        } catch (error) {
+          console.error(`${scriptName}: Error checking roads layer checkbox:`, error);
+        }
+      };
+
+      // Poll DOM for roads layer checkbox changes every 200ms
+      const domCheckInterval = setInterval(observeRoadsLayerCheckbox, 200);
+      eventSubscriptions.push(() => clearInterval(domCheckInterval));
+      console.log(`${scriptName}: Roads layer visibility sync enabled`);
 
       // Initial scan
       debouncedScan();
@@ -1423,6 +1520,23 @@ Version 2026.06.24.01:
   }
 
   /**
+   * Get current user's username
+   * Uses WME SDK State.getUserInfo() which replaces legacy W.loginManager
+   */
+  function getCurrentUsername() {
+    try {
+      // SDK method: wmeSDK.State.getUserInfo() returns { rank, userName, id, ... }
+      if (sdk?.State?.getUserInfo) {
+        const userInfo = sdk.State.getUserInfo();
+        return userInfo?.userName || null;
+      }
+    } catch (err) {
+      console.warn(`${scriptName}: Error getting current username:`, err);
+    }
+    return null;
+  }
+
+  /**
    * Scan all on-screen road segments for naming issues
    */
   async function scanRoadNames() {
@@ -1456,8 +1570,11 @@ Version 2026.06.24.01:
       for (const segment of onScreenSegments) {
         processedCount++;
 
-        // Check if segment is editable
+        // Check if segment is editable (or allow all segments if user is 'kid4rm90s' for testing)
+        const currentUser = getCurrentUsername();
+        const isExceptionUser = currentUser === 'kid4rm90s';
         if (
+          !isExceptionUser &&
           !sdk.DataModel.Segments.hasPermissions({
             permission: 'EDIT_PROPERTIES',
             segmentId: segment.id,
@@ -1570,10 +1687,27 @@ Version 2026.06.24.01:
   function analyzeStreetName(streetName) {
     if (!streetName) return { needsFix: false };
 
-    const currentWords = streetName.split(/\s+/);
-    let proposedWords = [...currentWords];
+    // Split by whitespace and commas (to treat commas as word separators)
+    // but preserve the structure by tracking word positions and separators
+    const tokens = streetName.split(/(\s+|,)/);  // split but capture separators
+    const words = tokens.filter((t, i) => i % 2 === 0 && t);  // get non-separator tokens
+    const separators = tokens.filter((t, i) => i % 2 === 1);  // get separators (spaces/commas)
+    
+    let proposedWords = [...words];
     let changed = false;
     let reasons = [];
+
+    // Reconstruct: we'll join words with their original separators at the end
+    const reconstructName = (wordArray) => {
+      let result = '';
+      for (let i = 0; i < wordArray.length; i++) {
+        result += wordArray[i];
+        if (i < separators.length) {
+          result += separators[i];
+        }
+      }
+      return result;
+    };
 
     // Check for NH-[A-Z0-9] pattern (e.g., "NH-ABC", "NH-125A" should have capital letters)
     const nhLetterPattern = /^(NH)-([a-z0-9]+)(?:\s|$)/i;
@@ -1610,9 +1744,24 @@ Version 2026.06.24.01:
       } */ //Temorarily disabling this check to allow for more flexible suggestions
 
       // Check if the highway part needs fixing (e.g., "Ringroad" -> "Ring Rd")
-      const hwyWords = hwyPart.split(/\s+/);
+      // Also handle commas as word separators in Portuguese highways
+      const hwyTokens = hwyPart.split(/(\s+|,)/);
+      const hwyWords = hwyTokens.filter((t, i) => i % 2 === 0 && t);
+      const hwySeparators = hwyTokens.filter((t, i) => i % 2 === 1);
+      
       let hwyProposedWords = [...hwyWords];
       let hwyChanged = false;
+
+      const reconstructHwyPart = (wordArray) => {
+        let result = '';
+        for (let i = 0; i < wordArray.length; i++) {
+          result += wordArray[i];
+          if (i < hwySeparators.length) {
+            result += hwySeparators[i];
+          }
+        }
+        return result;
+      };
 
       for (let i = 0; i < hwyWords.length; i++) {
         const word = hwyWords[i];
@@ -1653,7 +1802,7 @@ Version 2026.06.24.01:
       }
 
       if (hwyChanged) {
-        const newHwyPart = wmernh_titleCase(hwyProposedWords.join(' '));
+        const newHwyPart = wmernh_titleCase(reconstructHwyPart(hwyProposedWords));
         const newSuggestion = `${hwyCode.toUpperCase()} - ${newHwyPart}`;
         if (streetName !== newSuggestion) {
           return {
@@ -1679,8 +1828,8 @@ Version 2026.06.24.01:
     }
 
     // Check for standalone Devanagari abbreviations in any position (literal + regex)
-    for (let i = 0; i < currentWords.length; i++) {
-      const word = currentWords[i];
+    for (let i = 0; i < words.length; i++) {
+      const word = words[i];
       let devanagariSuggestion = wmernh_suggestedAbbr[word];
       if (!devanagariSuggestion) {
         for (const entry of wmernh_suggestedAbbrRegex) {
@@ -1698,13 +1847,13 @@ Version 2026.06.24.01:
     }
 
     // Process pre-suffix words
-    if (currentWords.length > 1) {
-      for (let i = 0; i < currentWords.length - 1; i++) {
-        const word = currentWords[i];
+    if (words.length > 1) {
+      for (let i = 0; i < words.length - 1; i++) {
+        const word = words[i];
         const wordLower = word.toLowerCase();
 
         // Skip if already processed as Devanagari
-        if (proposedWords[i] !== currentWords[i]) continue;
+        if (proposedWords[i] !== words[i]) continue;
 
         const generalSuggestionKeyCi = Object.keys(wmernh_generalWordSuggestions).find((k) => k.toLowerCase() === wordLower);
         if (generalSuggestionKeyCi) {
@@ -1719,18 +1868,18 @@ Version 2026.06.24.01:
     }
 
     // Process suffix (last word) - only if not already processed
-    if (currentWords.length > 0 && proposedWords[proposedWords.length - 1] === currentWords[currentWords.length - 1]) {
-      const potentialSuffix = currentWords[currentWords.length - 1];
+    if (words.length > 0 && proposedWords[proposedWords.length - 1] === words[words.length - 1]) {
+      const potentialSuffix = words[words.length - 1];
       const suffixAnalysis = wmernh_analyzeSuffix(potentialSuffix, true); // exactOnly = true for suffix to avoid over-suggesting
 
       if (suffixAnalysis.status === 'check' && suffixAnalysis.proposed.toLowerCase() !== potentialSuffix.toLowerCase()) {
-        proposedWords[currentWords.length - 1] = suffixAnalysis.proposed;
+        proposedWords[words.length - 1] = suffixAnalysis.proposed;
         changed = true;
         reasons.push(suffixAnalysis.message || `${potentialSuffix} → ${suffixAnalysis.proposed}`);
       }
     }
 
-    const finalProposed = wmernh_titleCase(proposedWords.join(' '));
+    const finalProposed = wmernh_titleCase(reconstructName(proposedWords));
     const capitalizationChanged = streetName !== finalProposed;
 
     if (changed || capitalizationChanged) {
@@ -1895,6 +2044,15 @@ Version 2026.06.24.01:
         fixSegmentNames(segment, issueTypeFilter);
       };
       item.appendChild(fixButton);
+
+      // Select button
+      const selectButton = document.createElement('button');
+      selectButton.className = 'rnh-select-button';
+      selectButton.textContent = 'Select';
+      selectButton.onclick = () => {
+        selectSegment(segment.id);
+      };
+      item.appendChild(selectButton);
 
       resultsContainer.appendChild(item);
     });
@@ -2166,10 +2324,13 @@ Version 2026.06.24.01:
     try {
       sdk.Map.addLayer({
         layerName: LAYER_NAME,
+        styleContext: {
+          getStrokeColor: () => highlightStyle.color,
+        },
         styleRules: [
           {
             style: {
-              strokeColor: '#ff8800',
+              strokeColor: '${getStrokeColor}',
               strokeDashstyle: 'solid',
               strokeWidth: 35,
             },
@@ -2193,7 +2354,7 @@ Version 2026.06.24.01:
       }, 100);
       // END HACK
 
-      console.log(`${scriptName}: Highlight layer initialized`);
+      console.log(`${scriptName}: Highlight layer initialized with color ${highlightStyle.color}`);
     } catch (error) {
       console.error(`${scriptName}: Error initializing layer:`, error);
     }
@@ -2205,6 +2366,8 @@ Version 2026.06.24.01:
    */
   function highlightSegmentOnHover(segmentId) {
     try {
+      if (!roadsLayerVisible) return;
+
       const segment = sdk.DataModel.Segments.getById({ segmentId });
       if (!segment || !segment.geometry) return;
 
@@ -2227,8 +2390,8 @@ Version 2026.06.24.01:
    * Clear hover highlight and restore preview highlights if enabled
    */
   function clearHoverHighlight() {
-    if (previewEnabled) {
-      // Restore all highlights if preview is enabled
+    if (previewEnabled && roadsLayerVisible) {
+      // Restore all highlights if preview is enabled and roads are visible
       highlightSegments();
     } else {
       // Clear all highlights
@@ -2241,7 +2404,7 @@ Version 2026.06.24.01:
    */
   function highlightSegments() {
     try {
-      if (!previewEnabled) {
+      if (!previewEnabled || !roadsLayerVisible) {
         sdk.Map.removeAllFeaturesFromLayer({ layerName: LAYER_NAME });
         return;
       }
@@ -2303,7 +2466,7 @@ Version 2026.06.24.01:
       }
     }
 
-    if (previewEnabled) {
+    if (previewEnabled && roadsLayerVisible) {
       highlightSegments();
     } else {
       sdk.Map.removeAllFeaturesFromLayer({ layerName: LAYER_NAME });
@@ -2322,6 +2485,23 @@ Version 2026.06.24.01:
     if (previewEnabled) {
       highlightSegments();
       displayResults(); // Update results display to show/hide alt name issues
+    }
+  }
+
+  /**
+ * Handle highlight color change
+ */
+  async function onHighlightColorChanged(event) {
+    const newColor = event.target.value;
+    highlightStyle.color = newColor;
+    localStorage.setItem(HIGHLIGHT_COLOR_KEY, newColor);
+
+    //Redraw the layer with the new color
+    try {
+      await sdk.Map.redrawLayer({ layerName: LAYER_NAME });
+      console.log(`${scriptName}: Highlight layer redrawn with new color ${newColor}`);
+    } catch (error) {
+      console.warn(`${scriptName}: Error redrawing highlight layer with new color`, error);
     }
   }
 
@@ -2392,6 +2572,12 @@ Version 2026.06.24.01:
   }
   /*
 Changelog:
+Version 2026.07.02.05:
+<strong>New Features & Fixes:</strong><br>
+- Added color picker to change the highlight color<br>
+- Highlight layer now syncs with the Roads layer visibility<br>
+- Bug fix for Portugal Abbreviation data<br>
+- Various bug fixes and improvements.<br>
 Version 2026.06.24.01:
 <strong>New Features & Fixes:</strong><br>
 - Added support for regex-based preserve-case and suggestion-case rules in the Google Sheets data.<br>
