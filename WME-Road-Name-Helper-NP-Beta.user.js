@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            WME Road Name Helper NP Beta
 // @description     Check suffix and common word abbreviations without leaving WME
-// @version         2026.07.02.05
+// @version         2026.07.02.06
 // @author          Kid4rm90s
 // @license         MIT
 // @match           *://*.waze.com/*editor*
@@ -23,7 +23,7 @@
 (function () {
   ('use strict');
   const updateMessage = `
-Version 2026.07.02.05:
+Version 2026.07.02.06:
 <strong>New Features & Fixes:</strong><br>
 - Added color picker to change the highlight color<br>
 - Highlight layer now syncs with the Roads layer visibility<br>
@@ -487,59 +487,35 @@ Version 2026.07.02.05:
   // ========== END GOOGLE SHEETS DATA LOADING ==========
 
   function wmernh_titleCase(str) {
-    // Split by whitespace and commas, capturing separators to preserve them
-    const tokens = str.split(/(\s+|,)/);
-    const words = tokens.filter((t, i) => i % 2 === 0 && t);  // non-separators
-    const separators = tokens.filter((t, i) => i % 2 === 1);  // separators (spaces/commas)
-
-    const titleCasedWords = words.map(function (txt, index) {
-      // Check if this word is preceded by opening quotes or parentheses
-      const prevToken = index > 0 ? words[index - 1] : '';
-      const followsOpenQuoteOrParen = /["(]$/.test(prevToken);
-      
+    return str
+      .split(/\s+/)
+      .map(function (txt) {
       // If word matches a preserve-case word (case-insensitive), use the preserved version
-      const preserve = wmernh_preserveCaseWords.find((w) => w.toLowerCase() === txt.toLowerCase());
-      if (preserve) return preserve;
-      
+        const preserve = wmernh_preserveCaseWords.find((w) => w.toLowerCase() === txt.toLowerCase());
+        if (preserve) return preserve;
       // Check regex-based preserve-case patterns
       for (const entry of wmernh_preserveCaseWordsRegex) {
         try {
-          if (entry.regex.test(txt)) {
-            return txt.replace(entry.regex, entry.replacement);
+            if (entry.regex.test(txt)) {
+              return txt.replace(entry.regex, entry.replacement);
           }
         } catch (e) { /* skip invalid regex */ }
       }
-      
-      // If word follows an opening quote or paren, preserve its original capitalization
-      // (These are often proper nouns like titles or names in parentheses)
-      if (followsOpenQuoteOrParen) {
-        return txt;
-      }
-      
       // Handle hyphenated words
-      if (txt.includes('-')) {
-        const parts = txt.split('-');
+        if (txt.includes('-')) {
+          const parts = txt.split('-');
         const firstPart = parts[0];
         const rest = parts.slice(1).join('-');
         // Road code: only when starts with 'NH', 'MDR', or 'SH' and second part contains digits (e.g., NH-125A, MDR-123, SH-45B)
         if (/^(nh|mdr|sh)$/i.test(firstPart) && /\d/.test(rest)) {
-          return txt.replace(/^([A-Za-z]+)-(.+)$/i, (match, p1, p2) => p1.toUpperCase() + '-' + p2.toUpperCase());
+            return txt.replace(/^([A-Za-z]+)-(.+)$/i, (match, p1, p2) => p1.toUpperCase() + '-' + p2.toUpperCase());
         }
         // For all other hyphenated words (e.g., East-west → East-West, Chandrapur-Gaur → Chandrapur-Gaur), title case each part
-        return parts.map((part) => part.charAt(0).toUpperCase() + part.substr(1).toLowerCase()).join('-');
+          return parts.map((part) => part.charAt(0).toUpperCase() + part.substr(1).toLowerCase()).join('-');
       }
-      return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
-    });
-
-    // Reconstruct with original separators
-    let result = '';
-    for (let i = 0; i < titleCasedWords.length; i++) {
-      result += titleCasedWords[i];
-      if (i < separators.length) {
-        result += separators[i];
-      }
-    }
-    return result;
+        return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
+      })
+      .join(' ');
   }
 
   let wmernh_valueObserver;
@@ -1687,27 +1663,10 @@ Version 2026.07.02.05:
   function analyzeStreetName(streetName) {
     if (!streetName) return { needsFix: false };
 
-    // Split by whitespace and commas (to treat commas as word separators)
-    // but preserve the structure by tracking word positions and separators
-    const tokens = streetName.split(/(\s+|,)/);  // split but capture separators
-    const words = tokens.filter((t, i) => i % 2 === 0 && t);  // get non-separator tokens
-    const separators = tokens.filter((t, i) => i % 2 === 1);  // get separators (spaces/commas)
-    
-    let proposedWords = [...words];
+    const currentWords = streetName.split(/\s+/);
+    let proposedWords = [...currentWords];
     let changed = false;
     let reasons = [];
-
-    // Reconstruct: we'll join words with their original separators at the end
-    const reconstructName = (wordArray) => {
-      let result = '';
-      for (let i = 0; i < wordArray.length; i++) {
-        result += wordArray[i];
-        if (i < separators.length) {
-          result += separators[i];
-        }
-      }
-      return result;
-    };
 
     // Check for NH-[A-Z0-9] pattern (e.g., "NH-ABC", "NH-125A" should have capital letters)
     const nhLetterPattern = /^(NH)-([a-z0-9]+)(?:\s|$)/i;
@@ -1744,24 +1703,9 @@ Version 2026.07.02.05:
       } */ //Temorarily disabling this check to allow for more flexible suggestions
 
       // Check if the highway part needs fixing (e.g., "Ringroad" -> "Ring Rd")
-      // Also handle commas as word separators in Portuguese highways
-      const hwyTokens = hwyPart.split(/(\s+|,)/);
-      const hwyWords = hwyTokens.filter((t, i) => i % 2 === 0 && t);
-      const hwySeparators = hwyTokens.filter((t, i) => i % 2 === 1);
-      
+      const hwyWords = hwyPart.split(/\s+/);
       let hwyProposedWords = [...hwyWords];
       let hwyChanged = false;
-
-      const reconstructHwyPart = (wordArray) => {
-        let result = '';
-        for (let i = 0; i < wordArray.length; i++) {
-          result += wordArray[i];
-          if (i < hwySeparators.length) {
-            result += hwySeparators[i];
-          }
-        }
-        return result;
-      };
 
       for (let i = 0; i < hwyWords.length; i++) {
         const word = hwyWords[i];
@@ -1802,7 +1746,7 @@ Version 2026.07.02.05:
       }
 
       if (hwyChanged) {
-        const newHwyPart = wmernh_titleCase(reconstructHwyPart(hwyProposedWords));
+        const newHwyPart = wmernh_titleCase(hwyProposedWords.join(' '));
         const newSuggestion = `${hwyCode.toUpperCase()} - ${newHwyPart}`;
         if (streetName !== newSuggestion) {
           return {
@@ -1828,8 +1772,8 @@ Version 2026.07.02.05:
     }
 
     // Check for standalone Devanagari abbreviations in any position (literal + regex)
-    for (let i = 0; i < words.length; i++) {
-      const word = words[i];
+    for (let i = 0; i < currentWords.length; i++) {
+      const word = currentWords[i];
       let devanagariSuggestion = wmernh_suggestedAbbr[word];
       if (!devanagariSuggestion) {
         for (const entry of wmernh_suggestedAbbrRegex) {
@@ -1847,13 +1791,13 @@ Version 2026.07.02.05:
     }
 
     // Process pre-suffix words
-    if (words.length > 1) {
-      for (let i = 0; i < words.length - 1; i++) {
-        const word = words[i];
+    if (currentWords.length > 1) {
+      for (let i = 0; i < currentWords.length - 1; i++) {
+        const word = currentWords[i];
         const wordLower = word.toLowerCase();
 
         // Skip if already processed as Devanagari
-        if (proposedWords[i] !== words[i]) continue;
+        if (proposedWords[i] !== currentWords[i]) continue;
 
         const generalSuggestionKeyCi = Object.keys(wmernh_generalWordSuggestions).find((k) => k.toLowerCase() === wordLower);
         if (generalSuggestionKeyCi) {
@@ -1868,18 +1812,18 @@ Version 2026.07.02.05:
     }
 
     // Process suffix (last word) - only if not already processed
-    if (words.length > 0 && proposedWords[proposedWords.length - 1] === words[words.length - 1]) {
-      const potentialSuffix = words[words.length - 1];
+    if (currentWords.length > 0 && proposedWords[proposedWords.length - 1] === currentWords[currentWords.length - 1]) {
+      const potentialSuffix = currentWords[currentWords.length - 1];
       const suffixAnalysis = wmernh_analyzeSuffix(potentialSuffix, true); // exactOnly = true for suffix to avoid over-suggesting
 
       if (suffixAnalysis.status === 'check' && suffixAnalysis.proposed.toLowerCase() !== potentialSuffix.toLowerCase()) {
-        proposedWords[words.length - 1] = suffixAnalysis.proposed;
+        proposedWords[currentWords.length - 1] = suffixAnalysis.proposed;
         changed = true;
         reasons.push(suffixAnalysis.message || `${potentialSuffix} → ${suffixAnalysis.proposed}`);
       }
     }
 
-    const finalProposed = wmernh_titleCase(reconstructName(proposedWords));
+    const finalProposed = wmernh_titleCase(proposedWords.join(' '));
     const capitalizationChanged = streetName !== finalProposed;
 
     if (changed || capitalizationChanged) {
